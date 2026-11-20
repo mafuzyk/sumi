@@ -1,6 +1,6 @@
 # Binary package for Sumi (prebuilt release tarball), Arch Linux x86_64.
 # The tarball is built by CI and upstream publishes SHA256SUMS.txt with every release.
-# prepare() checks the tarball against those published sums, so no hash is pinned here.
+# The published checksum for this release is pinned in sha256sums below.
 pkgname=sumi-bin
 pkgver=0.1.0
 pkgrel=1
@@ -41,29 +41,8 @@ optdepends=(
   'libpulse: Feedback Sounds and brush sounds via paplay/pacat (PulseAudio client)'
   'alsa-utils: Feedback Sounds and brush sounds via aplay (ALSA)'
 )
-source=(
-  "https://github.com/mafuzyk/sumi/releases/download/v$pkgver/sumi-$pkgver-linux-x86_64.tar.gz"
-  "https://github.com/mafuzyk/sumi/releases/download/v$pkgver/SHA256SUMS.txt"
-)
-# The tarball does not exist yet at packaging time and is built by CI, so a local hash would
-# not be meaningful; the published SHA256SUMS.txt is verified in prepare() instead.
-sha256sums=('SKIP' 'SKIP')
-
-prepare() {
-  cd "$srcdir"
-  # Upstream publishes SHA256SUMS.txt alongside each artifact. A hash pinned here would need a
-  # manual bump at every release, so verify the downloaded tarball against the published sums
-  # and fail the build on mismatch or a missing entry.
-  local line
-  line=$(grep -E "^[[:xdigit:]]{64}[[:space:]]+\\*?sumi-${pkgver//./\\.}-linux-x86_64\\.tar\\.gz$" SHA256SUMS.txt) || {
-    echo "error: no checksum for sumi-$pkgver-linux-x86_64.tar.gz in SHA256SUMS.txt" >&2
-    return 1
-  }
-  if ! printf '%s\n' "$line" | sha256sum --check; then
-    echo "error: sumi-$pkgver-linux-x86_64.tar.gz does not match the published SHA256SUMS.txt" >&2
-    return 1
-  fi
-}
+source=("$pkgname-$pkgver-linux-x86_64.tar.gz::https://github.com/mafuzyk/sumi/releases/download/v$pkgver/sumi-$pkgver-linux-x86_64.tar.gz")
+sha256sums=('b2f7106396fff3ba36b7bfe445d4d59742774e15fdeaddd330015c3c5d93fce7')
 
 package() {
   cd "$srcdir/sumi-$pkgver-linux-x86_64"

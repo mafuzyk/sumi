@@ -29,9 +29,7 @@ pkgbase = sumi-bin
 	provides = sumi
 	conflicts = sumi
 	options = !strip
-	source = https://github.com/mafuzyk/sumi/releases/download/v0.1.0/sumi-0.1.0-linux-x86_64.tar.gz
-	source = https://github.com/mafuzyk/sumi/releases/download/v0.1.0/SHA256SUMS.txt
-	sha256sums = SKIP
-	sha256sums = SKIP
+	source = sumi-bin-0.1.0-linux-x86_64.tar.gz::https://github.com/mafuzyk/sumi/releases/download/v0.1.0/sumi-0.1.0-linux-x86_64.tar.gz
+	sha256sums = b2f7106396fff3ba36b7bfe445d4d59742774e15fdeaddd330015c3c5d93fce7
 
 pkgname = sumi-bin

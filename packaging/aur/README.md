@@ -14,9 +14,8 @@ copies `share/` into `/usr/share/`. The shipped binary is already stripped, so t
 
 `pkgver` mirrors the GitHub release tag `vX.Y.Z` at
 https://github.com/mafuzyk/sumi/releases. Each build downloads
-`sumi-<version>-linux-x86_64.tar.gz` and the release's `SHA256SUMS.txt`; `prepare()` checks the
-tarball against the published sum and fails on a mismatch. No hash is pinned in the PKGBUILD
-because the tarball is produced by CI for every release.
+`sumi-<version>-linux-x86_64.tar.gz`. The checksum from the release's `SHA256SUMS.txt` is pinned in
+`sha256sums` in the PKGBUILD, so a mismatch fails the build.
 
 ## Maintainer steps at each release
 
