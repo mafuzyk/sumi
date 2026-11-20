@@ -102,6 +102,13 @@
 
           nativeBuildInputs = [ pkgs.makeWrapper ];
 
+          # Ship the same launcher entry and icons as the .deb, so a profile install shows up in
+          # desktop launchers.
+          postInstall = ''
+            install -Dm644 packaging/linux/sumi.desktop $out/share/applications/sumi.desktop
+            cp -R assets/app-icon/hicolor $out/share/icons/
+          '';
+
           postFixup = ''
             wrapProgram $out/bin/sumi \
               --prefix LD_LIBRARY_PATH : "${libraryPath pkgs}" \
