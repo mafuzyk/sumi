@@ -612,7 +612,8 @@ pub fn read_frames(path: &Path, mut each: impl FnMut(Vec<u8>, u32, u32, f64) -> 
     // Packaging/import can also decode video. Serialize these alongside replays so a
     // paused preview cannot overlap their native decoder/ffmpeg process.
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let _permit = decoder_permit(&stop, DecoderPriority::Required).expect("uncancelled video reader");
+    let stalled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let _permit = decoder_permit(&stop, &stalled, DecoderPriority::Required).expect("uncancelled video reader");
     #[cfg(any(windows, target_os = "macos"))]
     {
         system::read(path, &mut each).map_err(|e| e.to_string())
@@ -633,6 +634,7 @@ pub(crate) enum DecoderPriority {
 
 struct DecoderOwner {
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    stalled: std::sync::Arc<std::sync::atomic::AtomicBool>,
     priority: DecoderPriority,
 }
 
@@ -640,43 +642,52 @@ struct DecoderCoordinator {
     active: std::sync::Mutex<Option<DecoderOwner>>,
     available: std::sync::Condvar,
     #[cfg(test)]
-    waiters: std::sync::atomic::AtomicUsize,
+    waiting: std::sync::Mutex<Vec<std::sync::Arc<std::sync::atomic::AtomicBool>>>,
 }
 
 static DECODER_COORDINATOR: std::sync::LazyLock<DecoderCoordinator> = std::sync::LazyLock::new(|| DecoderCoordinator {
     active: std::sync::Mutex::new(None),
     available: std::sync::Condvar::new(),
     #[cfg(test)]
-    waiters: std::sync::atomic::AtomicUsize::new(0),
+    waiting: std::sync::Mutex::new(Vec::new()),
 });
 
 #[cfg(test)]
-struct WaitingDecoderPermit;
+struct WaitingDecoderPermit(std::sync::Arc<std::sync::atomic::AtomicBool>);
 
 #[cfg(test)]
 impl WaitingDecoderPermit {
-    fn new() -> Self {
-        DECODER_COORDINATOR.waiters.fetch_add(1, Ordering::SeqCst);
-        Self
+    fn new(stop: &std::sync::Arc<std::sync::atomic::AtomicBool>) -> Self {
+        DECODER_COORDINATOR.waiting.lock().unwrap().push(std::sync::Arc::clone(stop));
+        Self(std::sync::Arc::clone(stop))
     }
 }
 
 #[cfg(test)]
 impl Drop for WaitingDecoderPermit {
     fn drop(&mut self) {
-        DECODER_COORDINATOR.waiters.fetch_sub(1, Ordering::SeqCst);
+        let mut waiting = DECODER_COORDINATOR.waiting.lock().unwrap();
+        if let Some(i) = waiting.iter().position(|stop| std::sync::Arc::ptr_eq(stop, &self.0)) {
+            waiting.swap_remove(i);
+        }
     }
 }
 
 #[cfg(test)]
 pub(crate) fn hold_required_decoder_for_test() -> impl Drop {
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    decoder_permit(&stop, DecoderPriority::Required).expect("acquire Required decoder fixture")
+    let stalled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    decoder_permit(&stop, &stalled, DecoderPriority::Required).expect("acquire Required decoder fixture")
 }
 
 #[cfg(test)]
-pub(crate) fn waiting_decoders_for_test() -> usize {
-    DECODER_COORDINATOR.waiters.load(Ordering::SeqCst)
+pub(crate) fn is_waiting_decoder_for_test(stop: &std::sync::Arc<std::sync::atomic::AtomicBool>) -> bool {
+    DECODER_COORDINATOR.waiting.lock().unwrap().iter().any(|waiting| std::sync::Arc::ptr_eq(waiting, stop))
+}
+
+#[cfg(test)]
+pub(crate) fn is_active_decoder_for_test(stop: &std::sync::Arc<std::sync::atomic::AtomicBool>) -> bool {
+    DECODER_COORDINATOR.active.lock().unwrap().as_ref().is_some_and(|owner| std::sync::Arc::ptr_eq(&owner.stop, stop))
 }
 
 /// The mutex guards only ownership changes, never decoding or callback delivery. There
@@ -685,6 +696,7 @@ struct DecoderPermit;
 
 fn decoder_permit(
     stop: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+    stalled: &std::sync::Arc<std::sync::atomic::AtomicBool>,
     priority: DecoderPriority,
 ) -> Option<DecoderPermit> {
     use std::sync::atomic::Ordering;
@@ -698,12 +710,14 @@ fn decoder_permit(
         if let Some(owner) = active.as_ref() {
             #[cfg(test)]
             if waiting.is_none() {
-                waiting = Some(WaitingDecoderPermit::new());
+                waiting = Some(WaitingDecoderPermit::new(stop));
             }
-            // A paused replay may be waiting on a full four-frame channel. Interrupt it
-            // (the timed send and FFmpeg watcher observe this flag) instead of waiting
-            // indefinitely for its UI to consume another frame.
-            if owner.priority == DecoderPriority::Replay {
+            // Required operations can preempt replays, but another Replay must wait
+            // while the owner is starting or decoding normally. A Replay may only
+            // yield once it has been stuck on its full bounded channel.
+            if owner.priority == DecoderPriority::Replay
+                && (priority == DecoderPriority::Required || owner.stalled.load(Ordering::Acquire))
+            {
                 owner.stop.store(true, Ordering::Release);
             }
             let waited = DECODER_COORDINATOR
@@ -712,7 +726,13 @@ fn decoder_permit(
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             active = waited.0;
         } else {
-            *active = Some(DecoderOwner { stop: std::sync::Arc::clone(stop), priority });
+            #[cfg(test)]
+            drop(waiting.take());
+            *active = Some(DecoderOwner {
+                stop: std::sync::Arc::clone(stop),
+                stalled: std::sync::Arc::clone(stalled),
+                priority,
+            });
             return Some(DecoderPermit);
         }
     }
@@ -731,12 +751,23 @@ impl Drop for DecoderPermit {
 pub fn read_frames_cancelable(
     path: &Path,
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    stalled: std::sync::Arc<std::sync::atomic::AtomicBool>,
     priority: DecoderPriority,
     mut each: impl FnMut(Vec<u8>, u32, u32, f64) -> bool,
+    #[cfg(test)] simulated_startup_ms: u64,
 ) -> Result<u32, String> {
-    let Some(_permit) = decoder_permit(&stop, priority) else {
+    let Some(_permit) = decoder_permit(&stop, &stalled, priority) else {
         return Ok(0);
     };
+    // Simulate slow ffprobe/decoder startup deterministically without modifying the
+    // subprocess PATH, process environment, or global test state.
+    #[cfg(test)]
+    if simulated_startup_ms > 0 {
+        std::thread::sleep(std::time::Duration::from_millis(simulated_startup_ms));
+        if stop.load(std::sync::atomic::Ordering::Acquire) {
+            return Ok(0);
+        }
+    }
     #[cfg(any(windows, target_os = "macos"))]
     {
         use std::sync::atomic::Ordering;

@@ -472,6 +472,7 @@ struct ReaderMetrics {
     active: AtomicUsize,
     peak: AtomicUsize,
     started: AtomicUsize,
+    simulated_startup_ms: std::sync::atomic::AtomicU64,
 }
 
 #[cfg(test)]
@@ -501,11 +502,6 @@ enum ReadFrameError {
 }
 
 impl Reading {
-    #[cfg(test)]
-    fn recv(&self) -> Result<(u32, ThumbnailImage), std::sync::mpsc::RecvError> {
-        self.frames.recv()
-    }
-
     /// Export-card cancellation is checked while waiting for *any* frame, including the
     /// first one. Its atomic is also the reader's stop flag, so the worker wakes even
     /// while waiting behind another Required decoder permit.
@@ -590,14 +586,26 @@ fn note_problem(state: &Arc<Mutex<ReadState>>, problem: String) {
 fn deliver_frame(
     tx: &SyncSender<(u32, ThumbnailImage)>,
     stop: &AtomicBool,
+    stalled: &AtomicBool,
     #[cfg(test)] state: &Arc<Mutex<ReadState>>,
     mut frame: (u32, ThumbnailImage),
 ) -> bool {
+    // A full queue is normal for a fast decoder while the UI displays its frames.
+    // Yield to another replay only after the queue has stayed full long enough to
+    // indicate that no frames are being consumed (e.g. an actually paused replay).
+    let mut full_since = None;
     while !stop.load(Ordering::Acquire) {
         match tx.try_send(frame) {
-            Ok(()) => return true,
+            Ok(()) => {
+                stalled.store(false, Ordering::Release);
+                return true;
+            }
             Err(TrySendError::Disconnected(_)) => return false,
             Err(TrySendError::Full(pending)) => {
+                let since = full_since.get_or_insert_with(Instant::now);
+                if since.elapsed() >= Duration::from_millis(200) {
+                    stalled.store(true, Ordering::Release);
+                }
                 #[cfg(test)]
                 if let Ok(mut state) = state.lock() {
                     state.hit_full_queue = true;
@@ -631,11 +639,12 @@ fn read_in_order(
     let state = Arc::new(Mutex::new(ReadState::default()));
     let shared = Arc::clone(&state);
     let stop = cancellation.unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
+    let stalled = Arc::new(AtomicBool::new(false));
     let stops = Stops(Arc::clone(&stop));
     std::thread::spawn(move || {
         let _finished = Finished(Arc::clone(&shared));
         #[cfg(test)]
-        let _active = metrics.map(ActiveReader::new);
+        let _active = metrics.as_ref().map(|metrics| ActiveReader::new(Arc::clone(metrics)));
         let clips = lapse.clips();
         let mut next = 0usize;
         while let Some(&i) = wanted.get(next) {
@@ -648,6 +657,7 @@ fn read_in_order(
                         if !deliver_frame(
                             &tx,
                             &stop,
+                            &stalled,
                             #[cfg(test)]
                             &shared,
                             (i, frame),
@@ -665,6 +675,7 @@ fn read_in_order(
             let read = crate::video::read_frames_cancelable(
                 std::path::Path::new(&clip.path),
                 Arc::clone(&stop),
+                Arc::clone(&stalled),
                 match purpose {
                     ReadPurpose::Replay => crate::video::DecoderPriority::Replay,
                     ReadPurpose::Export => crate::video::DecoderPriority::Required,
@@ -677,6 +688,7 @@ fn read_in_order(
                         if !deliver_frame(
                             &tx,
                             &stop,
+                            &stalled,
                             #[cfg(test)]
                             &shared,
                             (here, ThumbnailImage { width, height, rgba }),
@@ -687,6 +699,8 @@ fn read_in_order(
                     }
                     !stop.load(Ordering::Relaxed) && wanted.get(next).is_some_and(|&n| n < end)
                 },
+                #[cfg(test)]
+                metrics.as_ref().map_or(0, |m| m.simulated_startup_ms.load(Ordering::SeqCst)),
             );
             if gone {
                 return;
@@ -1325,6 +1339,14 @@ mod tests {
 
     use super::*;
 
+    /// These cases assert precise decoder lifetimes and must not preempt each other.
+    /// Other time-lapse tests still run in parallel. The actual export-card test
+    /// observes its own stop Arc, never a global count of unrelated waiters.
+    fn decoder_test_guard() -> std::sync::MutexGuard<'static, ()> {
+        static DECODER_TEST_LOCK: Mutex<()> = Mutex::new(());
+        DECODER_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     #[test]
     fn player_transport_preserves_pause_seek_and_speed() {
         let mut player = TimeLapsePlayer::new(None);
@@ -1695,6 +1717,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn consecutive_video_scrubs_reap_ffmpeg_before_starting_the_next_reader() {
+        let _decoder_test = decoder_test_guard();
         if !has_ffmpeg_and_ffprobe() {
             eprintln!("SKIP real FFmpeg seek regression: ffmpeg or ffprobe unavailable on PATH");
             return;
@@ -1733,12 +1756,118 @@ mod tests {
         assert_eq!(metrics.started.load(Ordering::SeqCst), 2, "backward seek starts a new decoder");
         assert_eq!(metrics.peak.load(Ordering::SeqCst), 1, "two video readers overlapped");
         drop(player);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while metrics.active.load(Ordering::SeqCst) > 0 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(metrics.active.load(Ordering::SeqCst), 0, "a cancelled decoder must finish before the next test");
         std::fs::remove_dir_all(root).unwrap();
     }
 
     #[cfg(unix)]
     #[test]
+    fn two_active_replays_with_slow_decoder_startup_both_advance_without_preemption() {
+        let _decoder_test = decoder_test_guard();
+        if !has_ffmpeg_and_ffprobe() {
+            eprintln!("SKIP concurrent replay startup: ffmpeg or ffprobe unavailable on PATH");
+            return;
+        }
+        let root = scratch("two-slow-video-replays");
+        let lapse = recorded_video_fixture(&root, 24);
+        let mut first = TimeLapsePlayer::new(Some(Arc::clone(&lapse)));
+        let mut second = TimeLapsePlayer::new(Some(lapse));
+        // Slow startup happens AFTER the first replay acquires the exclusive permit.
+        // Both players are playing, not paused. Their redraws must not cancel either
+        // replay merely because the other is still waiting for ffprobe/ffmpeg.
+        first.reader_metrics.simulated_startup_ms.store(350, Ordering::SeqCst);
+        second.reader_metrics.simulated_startup_ms.store(350, Ordering::SeqCst);
+        let (first_ctx, second_ctx) = (egui::Context::default(), egui::Context::default());
+        let (mut first_look, mut second_look) = (Look::default(), Look::default());
+        crate::look::install_fonts(&first_ctx);
+        crate::look::install_fonts(&second_ctx);
+        let (mut first_time, mut second_time) = (0.0, 0.0);
+        frame(&mut first, &first_ctx, &mut first_look, Vec::new(), &mut first_time);
+        let first_stop = first.reading_stop().expect("the first video reader starts");
+        let deadline = Instant::now() + Duration::from_secs(8);
+        while !crate::video::is_active_decoder_for_test(&first_stop) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(crate::video::is_active_decoder_for_test(&first_stop), "the first reader owns decoder during startup");
+        frame(&mut second, &second_ctx, &mut second_look, Vec::new(), &mut second_time);
+        let second_stop = second.reading_stop().expect("the second video reader starts");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !crate::video::is_waiting_decoder_for_test(&second_stop) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(crate::video::is_waiting_decoder_for_test(&second_stop), "second decoder must queue behind the first");
+        // Multiple redraw cycles while the first ffmpeg has not even started.
+        for _ in 0..6 {
+            frame(&mut first, &first_ctx, &mut first_look, Vec::new(), &mut first_time);
+            frame(&mut second, &second_ctx, &mut second_look, Vec::new(), &mut second_time);
+            std::thread::sleep(Duration::from_millis(15));
+        }
+        assert!(!first_stop.load(Ordering::Acquire), "another active Replay preempted the first during startup");
+        assert!(!second_stop.load(Ordering::Acquire), "a queued Replay was cancelled during startup");
+
+        let deadline = Instant::now() + Duration::from_secs(12);
+        while Instant::now() < deadline {
+            frame(&mut first, &first_ctx, &mut first_look, Vec::new(), &mut first_time);
+            frame(&mut second, &second_ctx, &mut second_look, Vec::new(), &mut second_time);
+            if first.shown.as_ref().is_some_and(|(i, _)| *i >= 2) && second.shown.as_ref().is_some_and(|(i, _)| *i >= 2)
+            {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(6));
+        }
+        assert!(first.shown.as_ref().is_some_and(|(i, _)| *i >= 2), "first active Replay did not advance");
+        assert!(second.shown.as_ref().is_some_and(|(i, _)| *i >= 2), "second active Replay did not advance");
+        assert_eq!(first.reader_metrics.started.load(Ordering::SeqCst), 1, "first Replay was needlessly restarted");
+        assert_eq!(second.reader_metrics.started.load(Ordering::SeqCst), 1, "second Replay was needlessly restarted");
+        let first_metrics = Arc::clone(&first.reader_metrics);
+        let second_metrics = Arc::clone(&second.reader_metrics);
+        drop((first, second));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while (first_metrics.active.load(Ordering::SeqCst) > 0 || second_metrics.active.load(Ordering::SeqCst) > 0)
+            && Instant::now() < deadline
+        {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(first_metrics.active.load(Ordering::SeqCst), 0, "first decoder worker was not reaped");
+        assert_eq!(second_metrics.active.load(Ordering::SeqCst), 0, "second decoder worker was not reaped");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_full_queue_marks_stall_until_a_consumer_makes_progress() {
+        // The stall detector has its own test: unlike an FFmpeg fixture it cannot
+        // be preempted by unrelated Required readers in parallel tests.
+        let (tx, rx) = sync_channel(1);
+        let frame = || ThumbnailImage { width: 1, height: 1, rgba: vec![10, 20, 30, 255] };
+        tx.try_send((0, frame())).unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let stalled = Arc::new(AtomicBool::new(false));
+        let state = Arc::new(Mutex::new(ReadState::default()));
+        let (worker_stop, worker_stalled, worker_state) = (Arc::clone(&stop), Arc::clone(&stalled), Arc::clone(&state));
+        let started = Instant::now();
+        let worker =
+            std::thread::spawn(move || deliver_frame(&tx, &worker_stop, &worker_stalled, &worker_state, (1, frame())));
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !stalled.load(Ordering::Acquire) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(stalled.load(Ordering::Acquire), "a persistently full queue must eventually yield");
+        assert!(started.elapsed() >= Duration::from_millis(200), "a transient full queue is not a stall");
+        assert!(state.lock().unwrap().hit_full_queue);
+        assert_eq!(rx.recv_timeout(Duration::from_secs(2)).unwrap().0, 0);
+        assert_eq!(rx.recv_timeout(Duration::from_secs(2)).unwrap().0, 1);
+        assert!(worker.join().unwrap(), "the pending frame must be delivered in full");
+        assert!(!stalled.load(Ordering::Acquire), "resuming consumption clears the stall signal");
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn paused_replay_with_full_frame_channel_allows_export_and_cancellation() {
+        let _decoder_test = decoder_test_guard();
         if !has_ffmpeg_and_ffprobe() {
             eprintln!("SKIP full-queue decoder regression: ffmpeg or ffprobe unavailable on PATH");
             return;
@@ -1790,13 +1919,20 @@ mod tests {
             export_state.lock().unwrap().finished,
             "cancelled export must fully stop before another decoder starts"
         );
+        let next_state = Arc::clone(&next.state);
         drop(next);
         drop(paused);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !next_state.lock().unwrap().finished && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(next_state.lock().unwrap().finished, "the final replay must reap before releasing the test guard");
         std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
     fn cancelling_export_card_while_required_decoder_is_held_stops_all_workers() {
+        let _decoder_test = decoder_test_guard();
         let root = scratch("cancel-required-permit-from-card");
         let art = root.join("artwork");
         // Deliberately unreadable video: the first frame would fail if a decoder ever
@@ -1814,12 +1950,16 @@ mod tests {
             assert!(ui.export(None, &format!("cancel-required-{attempt}")).is_none());
             assert!(ui.card.busy(), "a real export card is open");
             let (done, card_exporting) = ui.exporting.as_ref().expect("real UI export handle");
+            let this_reader = card_exporting.cancellation_flag();
 
             let deadline = Instant::now() + Duration::from_secs(3);
-            while crate::video::waiting_decoders_for_test() == 0 && Instant::now() < deadline {
+            while !crate::video::is_waiting_decoder_for_test(&this_reader) && Instant::now() < deadline {
                 std::thread::sleep(Duration::from_millis(2));
             }
-            assert!(crate::video::waiting_decoders_for_test() > 0, "export worker did not wait for Required permit");
+            assert!(
+                crate::video::is_waiting_decoder_for_test(&this_reader),
+                "this export worker did not wait for Required permit"
+            );
             assert!(matches!(done.try_recv(), Err(std::sync::mpsc::TryRecvError::Empty)));
             assert_eq!(metrics.active.load(Ordering::SeqCst), 1, "worker is alive and waiting");
 
@@ -1834,7 +1974,10 @@ mod tests {
             assert_eq!(metrics.started.load(Ordering::SeqCst), 1, "one export creates one frame reader");
             assert_eq!(metrics.active.load(Ordering::SeqCst), 0, "no reader worker may survive card cancellation");
             assert_eq!(metrics.peak.load(Ordering::SeqCst), 1, "no additional workers accumulated");
-            assert_eq!(crate::video::waiting_decoders_for_test(), 0, "cancelled Required wait must be removed");
+            assert!(
+                !crate::video::is_waiting_decoder_for_test(&this_reader),
+                "this cancelled Required wait must be removed, independently of other parallel tests"
+            );
         }
 
         drop(held);
@@ -1880,6 +2023,7 @@ mod tests {
 
     #[test]
     fn a_replay_whose_video_cannot_be_read_says_so_instead_of_staying_blank() {
+        let _decoder_test = decoder_test_guard();
         let root = scratch("unreadable-video");
         let art = root.join("artwork");
         unreadable_video(&art, true);
@@ -1888,14 +2032,18 @@ mod tests {
         let mut time = 0.0;
         let mut player = TimeLapsePlayer::for_gallery(&art.to_string_lossy());
         assert_eq!(player.count, 1, "the video notes a frame");
-        // The reader's completion, not a scheduler budget: an unreadable clip must send no frame.
-        _ = frame(&mut player, &ctx, &mut look, Vec::new(), &mut time);
-        if let Some(ahead) = player.ahead.as_ref() {
-            assert!(ahead.reading.recv().is_err(), "an unreadable video must produce no frames");
-            assert!(ahead.reading.state().finished, "the reader finished");
+        // A parallel Required import/export may own the global decoder or preempt
+        // this Replay before its broken clip is opened. Drive redraws until the UI
+        // can retry and report the actual unreadable video, rather than assuming
+        // the very next redraw always completes the decoder.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while player.message().is_none() && Instant::now() < deadline {
+            _ = frame(&mut player, &ctx, &mut look, Vec::new(), &mut time);
+            std::thread::sleep(Duration::from_millis(5));
         }
-        _ = frame(&mut player, &ctx, &mut look, Vec::new(), &mut time);
-        let said = player.message().expect("a replay with no frame says why");
+        let said =
+            player.message().expect("unreadable video must eventually report an error, even with other decoders");
+        assert!(!player.showing(), "an unreadable video must never produce a frame");
         assert!(said == crate::video::NO_FFMPEG || said.contains("can't be read"), "{said}");
         let escape = Event::Key {
             key: egui::Key::Escape,
@@ -2120,6 +2268,7 @@ mod tests {
     #[test]
     #[ignore = "requires external FFmpeg/FFprobe for the real export roundtrip"]
     fn a_time_lapse_export_thread_makes_a_playable_mp4() {
+        let _decoder_test = decoder_test_guard();
         // The real UI export thread and card, with the system's encoder: no mocked writer, no
         // dialog, and no skip path (a missing encoder must fail this test, not pass it).
         let root = scratch("native-export");
@@ -2200,6 +2349,7 @@ mod tests {
     #[test]
     #[ignore = "needs a .procreate with a time-lapse, and ffmpeg"]
     fn a_packages_videos_come_in_as_they_are_and_play_back() {
+        let _decoder_test = decoder_test_guard();
         let Ok(package) = std::env::var("SUMI_PACKAGE") else { return };
         let dir = std::env::temp_dir().join(format!("sumi-take-real-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
