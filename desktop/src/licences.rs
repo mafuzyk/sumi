@@ -1,8 +1,5 @@
-//! Help's Licences, as the Android app's dialog: what the app is made with (the interface font and
-//! the icons) and their licences, on a dark panel over the dimmed window, the text scrolling;
-//! Done or a tap beside it closes it. The desktop has no settings screen of its own to list the
-//! third-party crates (Android's does), so they follow here (desktop/licenses.txt, written by
-//! tools/licenses.py).
+//! Help's Licences: bundled fonts, icons and third-party crates, scrolled in a desktop panel.
+//! The crate manifest is generated in desktop/licenses.txt by tools/licenses.py.
 
 use std::sync::{Arc, OnceLock};
 
@@ -20,9 +17,9 @@ const INK: u32 = 0xFFC5C5C5;
 
 const LICENCES: &str = concat!(
     "The interface font is Inter, by The Inter Project Authors.\n\n",
-    include_str!("../../android/app/src/main/assets/fonts/Inter-OFL.txt"),
+    include_str!("../../assets/shared/fonts/Inter-OFL.txt"),
     "\n\nThe app keeps Lucide icons (lucide.dev), by Lucide Icons and Contributors.\n\n",
-    include_str!("../../android/app/src/main/assets/icons/LICENSE-lucide.txt"),
+    include_str!("../../assets/shared/icons/LICENSE-lucide.txt"),
     "
 
 ",

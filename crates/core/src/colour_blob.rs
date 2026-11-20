@@ -36,7 +36,7 @@ const CURVE_STEPS: usize = 8;
 const RIM_LEAST: f64 = 0.7;
 
 /// The outline to fill this frame.
-#[derive(Clone, Debug, Default, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct BlobShape {
     /// Closed outlines, filled together (non-zero): x, y, x, y, ... in points.
     pub outlines: Vec<BlobOutline>,
@@ -49,7 +49,7 @@ pub struct BlobShape {
 }
 
 /// One outline of a [`BlobShape`].
-#[derive(Clone, Debug, Default, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct BlobOutline {
     pub points: Vec<f32>,
 }
@@ -364,18 +364,16 @@ fn dot_across(pen: bool) -> f64 {
 
 /// A colour being dragged out, as it is drawn: made as the drag starts, told where the pointer
 /// goes, asked for its outline each frame.
-#[derive(uniffi::Object)]
+
 pub struct ColourBlob {
     spring: Mutex<Spring>,
 }
 
-#[uniffi::export]
 impl ColourBlob {
     /// The colour pulled out from (`x`, `y`) (points) at `ms`: out of the colour button
     /// (`from_button`: its centre, an end left over it while the drop is joined) or out of a
     /// swatch; by a pen or a finger. With `reduce_motion` it neither stretches nor wobbles: the
     /// dot is under the pointer.
-    #[uniffi::constructor]
     pub fn new(x: f32, y: f32, from_button: bool, pen: bool, reduce_motion: bool, ms: f64) -> Arc<ColourBlob> {
         let origin_d = if from_button { BUTTON * TEXT_SIZE } else { 0.0 };
         let spring = Spring::new(f64::from(x), f64::from(y), origin_d, dot_across(pen), reduce_motion, ms);

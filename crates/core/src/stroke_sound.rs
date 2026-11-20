@@ -88,7 +88,6 @@ impl crate::State {
     }
 }
 
-#[uniffi::export]
 impl CanvasSession {
     /// The pen (or the mouse) hovers over the canvas at (`x`, `y`), window pixels: a sound plugin
     /// is told where (a spray can's ball rattles shaken back and forth).

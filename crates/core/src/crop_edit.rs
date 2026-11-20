@@ -31,7 +31,7 @@ enum Grab {
 }
 
 /// The crop as its frame and settings show it.
-#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct CropShown {
     /// The rectangle kept, canvas pixels.
     pub x: f32,
@@ -155,7 +155,6 @@ impl CropEdit {
     }
 }
 
-#[uniffi::export]
 impl CanvasSession {
     /// Starts Crop and Resize (again): the whole canvas kept, unturned, at its size, the canvas
     /// fitted to the window and shrunk so the frame's handles are clear. Aspect lock and snapping

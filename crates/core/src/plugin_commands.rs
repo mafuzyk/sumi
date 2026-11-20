@@ -14,7 +14,7 @@ use crate::CanvasSession;
 use crate::plugin_panel::{PluginPanel, read_panel};
 
 /// What a plugin may ask to do besides answering hooks.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PluginPermission {
     /// The artwork's size, its layers and their pixels.
     ArtworkRead,

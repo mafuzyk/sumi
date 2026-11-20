@@ -29,7 +29,7 @@ const MOST_OPTIONS: usize = 8;
 const MOST_KEYS: usize = 8;
 
 /// A plugin's panel as the apps show it.
-#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PluginPanel {
     pub title: String,
     pub rows: Vec<PanelRow>,
@@ -38,7 +38,7 @@ pub struct PluginPanel {
 }
 
 /// One of its rows.
-#[derive(Clone, Debug, PartialEq, uniffi::Enum)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum PanelRow {
     /// Words, a line or a few.
     Text {

@@ -6,7 +6,7 @@ use sumi_gpu::{Target, read_texture, wgpu};
 use crate::CanvasSession;
 
 /// What the eyedropper sees.
-#[derive(Clone, Debug, uniffi::Record)]
+#[derive(Clone, Debug)]
 pub struct Pick {
     /// The colour under the point (0xRRGGBB): the canvas's, or the current layer's when a plugin
     /// says to read that (none where it is clear); none when the point is off the canvas.
@@ -18,7 +18,6 @@ pub struct Pick {
     pub pixels: Vec<u8>,
 }
 
-#[uniffi::export]
 impl CanvasSession {
     /// The `side` × `side` window pixels centred on window point (`x`, `y`) as they are shown
     /// (canvas through the view, surround and grid), and the colour under the point. None before

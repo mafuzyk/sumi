@@ -61,7 +61,7 @@
           pname = "sumi";
           inherit version;
 
-          # The whole tree: the desktop app embeds android/app/src/main/assets/ (fonts, brushes,
+          # The whole tree: the desktop app embeds assets/shared/ (fonts, brushes,
           # environments) and crates/clip-core ships assets/blank.clip at compile time. Build
           # output and the git database are the only things left out.
           src = lib.cleanSourceWith {
@@ -81,7 +81,7 @@
 
           cargoLock.lockFile = ./Cargo.lock;
 
-          # Only the desktop crate: the Android bindgen and the other members are not packaged.
+          # Only the desktop crate is packaged; the other crates are linked as dependencies.
           cargoBuildFlags = [
             "-p"
             "sumi-desktop"
@@ -140,7 +140,7 @@
           ];
 
           # `cargo run -p sumi-desktop` loads its windowing and GPU libraries by name, the same way
-          # the wrapped package does, so the shell exports the same path. No Android SDK: that
+          # the wrapped package does, so the shell exports the same path. This
           # build has its own tooling and is out of scope here.
           shellHook = ''
             export LD_LIBRARY_PATH="${libraryPath pkgs}"''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}

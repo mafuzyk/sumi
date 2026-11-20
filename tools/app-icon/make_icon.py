@@ -1,5 +1,5 @@
-"""Draws Sumi's app icon, a paintbrush in a warm-to-cool blend on black, and writes every size
-the app and the repository use. Needs Pillow. Run from anywhere:
+"""Draws Sumi's desktop app icon, a paintbrush in a warm-to-cool blend on black.
+Needs Pillow. Run from anywhere:
 
     python tools/app-icon/make_icon.py
 
@@ -10,10 +10,6 @@ Writes:
   its installer).
 - assets/app-icon/hicolor/<n>x<n>/apps/sumi.png: the tile at the sizes Linux desktops look up
   for the app's menu entry and window (copied as it is into the packages' share/icons/).
-- the Android adaptive icon's layers (108 dp, the tile its middle 72 dp): the brush and its glow
-  (drawable-*dpi/ic_launcher_foreground.png), the brush alone in white for themed icons
-  (drawable-*dpi/ic_launcher_monochrome.png), and a large copy for the About screen
-  (drawable-nodpi/sumi_mark.png).
 """
 
 import math
@@ -22,7 +18,6 @@ import os
 from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-RES = os.path.join(ROOT, 'android', 'app', 'src', 'main', 'res')
 
 S = 2048  # the 512-unit tile, drawn at 4x
 INK = (11, 11, 12)
@@ -104,14 +99,6 @@ def tile_mask():
     return m
 
 
-def adaptive(picture):
-    """`picture` (the tile's contents) placed in the middle 72 of the adaptive icon's 108."""
-    side = round(S * 108 / 72)
-    out = Image.new('RGBA', (side, side), (0, 0, 0, 0))
-    out.alpha_composite(picture, ((side - S) // 2, (side - S) // 2))
-    return out
-
-
 def save(image, path, size):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     image.resize((size, size), Image.LANCZOS).save(path, optimize=True)
@@ -132,16 +119,6 @@ def main():
     for size in (16, 24, 32, 48, 64, 128, 256, 512):
         save(tile, os.path.join(ROOT, 'assets', 'app-icon', 'hicolor', f'{size}x{size}', 'apps', 'sumi.png'), size)
 
-    foreground = adaptive(picture)
-    mono = Image.new('RGBA', turned.size, (255, 255, 255, 0))
-    mono.putalpha(turned.split()[3])
-    monochrome = adaptive(mono)
-    for bucket, scale in (('mdpi', 1), ('hdpi', 1.5), ('xhdpi', 2), ('xxhdpi', 3), ('xxxhdpi', 4)):
-        size = round(108 * scale)
-        save(foreground, os.path.join(RES, f'drawable-{bucket}', 'ic_launcher_foreground.png'), size)
-        save(monochrome, os.path.join(RES, f'drawable-{bucket}', 'ic_launcher_monochrome.png'), size)
-    # the About screen shows it 450 dp across: sharp up to about 3 pixels a dp
-    save(foreground, os.path.join(RES, 'drawable-nodpi', 'sumi_mark.png'), 1350)
     print('written')
 
 

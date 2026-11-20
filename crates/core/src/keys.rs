@@ -17,7 +17,7 @@ const TURN_STEP: f32 = 15.0 * PI / 180.0;
 const TURN_STILL: f32 = 8.0;
 
 /// What a shortcut does.
-#[derive(Clone, Copy, Debug, PartialEq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum KeyShortcut {
     Undo,
     Redo,
@@ -85,7 +85,6 @@ pub enum KeyShortcut {
 /// selection, V transform, H flips the canvas left to right, C the colours, X swaps them, L
 /// Layers, Space the QuickMenu, [ and ] the brush's size by 5% (with Shift 10%); U, D, J, K and 0
 /// as with the command key.
-#[uniffi::export]
 pub fn key_shortcut(key: String, command: bool, shift: bool, alt: bool, transforming: bool) -> Option<KeyShortcut> {
     use KeyShortcut::*;
     let key = key.to_lowercase();
@@ -147,7 +146,7 @@ pub fn key_shortcut(key: String, command: bool, shift: bool, alt: bool, transfor
 const FAR: f32 = 100_000.0;
 
 /// What a mouse dragged on the canvas with a key held does, in place of painting.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum KeyDrag {
     /// Space with the command key (Ctrl, ⌘): the canvas zooms in as the pointer goes right or up,
     /// and out as it goes left or down, about where it went down (e times every
@@ -174,7 +173,6 @@ fn short_way(angle: f32) -> f32 {
     (angle + PI).rem_euclid(TAU) - PI
 }
 
-#[uniffi::export]
 impl CanvasSession {
     /// An arrow key while transforming: the content moves one canvas pixel the window's way
     /// (`dx`, `dy`). Returns the box.
@@ -249,7 +247,7 @@ impl CanvasSession {
 
 /// A key pressed with modifiers, as [`key_shortcut`] names it: the key's name ("z", "[",
 /// "delete", "left") and whether the command key (Ctrl, ⌘), Shift and Alt (⌥) are held.
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct KeyCombo {
     pub key: String,
     pub command: bool,
@@ -315,7 +313,7 @@ impl KeyCombo {
 
 /// A row of the keyboard shortcuts' list: its keys written out for the platform (`keys`), the
 /// presses that do it (`combos`, none for a drag), and what it does.
-#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ShortcutRow {
     pub keys: String,
     pub combos: Vec<KeyCombo>,
@@ -323,7 +321,7 @@ pub struct ShortcutRow {
 }
 
 /// A group of the keyboard shortcuts' list, under its heading.
-#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ShortcutGroup {
     pub heading: String,
     pub rows: Vec<ShortcutRow>,
@@ -506,7 +504,6 @@ fn combo(&(command, shift, alt, key): &Press) -> KeyCombo {
 /// them), with the desktop's own too (its files, zooming and turning the view) if `desktop`; the
 /// keys written as a Mac's (⌘, ⇧, ⌥) if `mac`, else "Ctrl+", "Shift+", "Alt+". With a plugin
 /// rebinding keys, [`crate::Plugins::key_shortcut_list`] shows them as they are now.
-#[uniffi::export]
 pub fn key_shortcut_list(desktop: bool, mac: bool) -> Vec<ShortcutGroup> {
     shortcut_list_now(desktop, mac, |_| None)
 }
@@ -549,10 +546,10 @@ pub(crate) fn shortcut_list_now(
 
 /// Whether the app's shortcuts are the desktop's (its files, zooming and turning the view, which a
 /// plugin is told of too), as the platform this is built for has them.
-pub(crate) const DESKTOP: bool = !cfg!(any(target_os = "android", target_os = "ios"));
+pub(crate) const DESKTOP: bool = true;
 /// Whether presses the core writes out itself (a plugin's panel's) are a Mac's (⌘, ⇧, ⌥), as the
 /// platform this is built for writes them.
-pub(crate) const MAC: bool = cfg!(any(target_os = "macos", target_os = "ios"));
+pub(crate) const MAC: bool = cfg!(target_os = "macos");
 
 /// The shortcuts as a plugin on the `key_shortcut` hook is told them: a line each, of its group,
 /// what it does, its presses (each as [`KeyCombo::text`] writes it, a space between) and whether the

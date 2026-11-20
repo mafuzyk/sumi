@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use crate::touch::{GestureAction, TouchSettings};
 
 /// What a gesture can do: the pages of Gesture controls.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum GesturePurpose {
     Smudge,
     Erase,
@@ -27,7 +27,7 @@ pub enum GesturePurpose {
 }
 
 /// A way of touching: each does one thing at most (General's and Hover's settings aside).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Trigger {
     TapModify,
     Touch,
@@ -46,7 +46,7 @@ pub enum Trigger {
 /// One switch on a page: its name (a trigger's, or a setting of its own), what it says and does,
 /// whether it starts on, whether it has a delay slider under it, and whether it needs a pen's
 /// button held down (an app whose pen only taps, as a double-tap does, leaves that switch out).
-#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct GestureOption {
     pub key: String,
     pub label: String,
@@ -133,24 +133,20 @@ fn own(key: &str, label: &str, detail: &str, default: bool, delayed: bool) -> Ge
 }
 
 /// A page's title (its row in the list) and heading.
-#[uniffi::export]
 pub fn gesture_purpose_title(purpose: GesturePurpose) -> String {
     purpose_entry(purpose).2.to_owned()
 }
 
-#[uniffi::export]
 pub fn gesture_purpose_heading(purpose: GesturePurpose) -> String {
     purpose_entry(purpose).3.to_owned()
 }
 
 /// The pages in order.
-#[uniffi::export]
 pub fn gesture_purposes() -> Vec<GesturePurpose> {
     PURPOSES.iter().map(|e| e.0).collect()
 }
 
 /// A page's switches, in order.
-#[uniffi::export]
 pub fn gesture_options(purpose: GesturePurpose) -> Vec<GestureOption> {
     use Trigger as T;
     match purpose {
@@ -272,7 +268,6 @@ pub fn gesture_options(purpose: GesturePurpose) -> Vec<GestureOption> {
 }
 
 /// A trigger's label.
-#[uniffi::export]
 pub fn gesture_trigger_label(trigger: Trigger) -> String {
     trigger_entry(trigger).2.to_owned()
 }
@@ -288,7 +283,7 @@ fn default_delay(p: GesturePurpose) -> f32 {
 
 /// The settings as kept: each switch by its name (`PAGE.KEY`, as `EYEDROPPER.HOLD`) and each page's
 /// delay by `PAGE.delay`, seconds.
-#[derive(Clone, Debug, Default, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct KeptGestures {
     pub switches: HashMap<String, bool>,
     pub delays: HashMap<String, f32>,
@@ -301,15 +296,13 @@ struct State {
 }
 
 /// The gesture settings: the app holds one, made from what it kept, and keeps what changes.
-#[derive(uniffi::Object)]
+
 pub struct GestureSettings {
     state: Mutex<State>,
 }
 
-#[uniffi::export]
 impl GestureSettings {
     /// The settings from what was `kept` (anything not there as the app ships).
-    #[uniffi::constructor]
     pub fn new(kept: KeptGestures) -> Arc<GestureSettings> {
         let mut st = State::default();
         for &(p, page, _, _) in &PURPOSES {

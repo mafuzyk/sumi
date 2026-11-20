@@ -377,7 +377,7 @@ fn operation_cost() {
     }
     // text typed into a layer of its own, a letter at a time: each drawing into the layer as the
     // apps make it (only where the text reaches), then the whole canvas drawn as it was before
-    crate::add_text_font(include_bytes!("../../../android/app/src/main/assets/fonts/Inter-Regular.ttf").to_vec());
+    crate::add_text_font(include_bytes!("../../../assets/shared/fonts/Inter-Regular.ttf").to_vec());
     let typed = |i: usize| crate::TextInfo {
         size: 60.0,
         x: 300.0,
@@ -736,8 +736,6 @@ fn gestures_move_the_view_and_bad_values_are_ignored() {
     std::thread::sleep(std::time::Duration::from_secs_f32(s.view_settle_seconds()));
     s.shared.lock().step_view_motion();
     assert!((s.info().zoom - 1.0).abs() < 1e-4);
-    // no window on the host
-    assert!(s.attach_window(1, 10, 10).is_err());
 }
 
 #[test]
@@ -7968,7 +7966,7 @@ fn inked(px: &[u8], w: usize) -> (usize, [usize; 4]) {
 
 #[test]
 fn text_drawn_into_its_layer_a_part_at_a_time_is_as_drawn_whole() {
-    crate::add_text_font(include_bytes!("../../../android/app/src/main/assets/fonts/Inter-Regular.ttf").to_vec());
+    crate::add_text_font(include_bytes!("../../../assets/shared/fonts/Inter-Regular.ttf").to_vec());
     let Some(s) = session(300, 300) else { return };
     let layer_now = |s: &CanvasSession, id: u64| {
         let _ = pixel(s, 0, 0);
@@ -8024,8 +8022,8 @@ fn text_drawn_into_its_layer_a_part_at_a_time_is_as_drawn_whole() {
 
 #[test]
 fn every_letter_drawn_falls_within_where_the_text_reaches() {
-    crate::add_text_font(include_bytes!("../../../android/app/src/main/assets/fonts/Inter-Regular.ttf").to_vec());
-    crate::add_text_font(include_bytes!("../../../android/app/src/main/assets/fonts/Inter-Bold.ttf").to_vec());
+    crate::add_text_font(include_bytes!("../../../assets/shared/fonts/Inter-Regular.ttf").to_vec());
+    crate::add_text_font(include_bytes!("../../../assets/shared/fonts/Inter-Bold.ttf").to_vec());
     let (w, h) = (700u32, 700u32);
     let base = crate::TextInfo { size: 60.0, x: 200.0, y: 200.0, ..text_info("Wavy Æ gjpq ÅÉ ffi %@ ~") };
     // each setting that moves ink at its widest
@@ -8100,7 +8098,7 @@ fn memory_trimmed_mid_work_leaves_the_canvas_as_it_was_and_working() {
 
 #[test]
 fn text_typed_keeps_the_pictures_of_the_layers_below_it() {
-    crate::add_text_font(include_bytes!("../../../android/app/src/main/assets/fonts/Inter-Regular.ttf").to_vec());
+    crate::add_text_font(include_bytes!("../../../assets/shared/fonts/Inter-Regular.ttf").to_vec());
     let Some(s) = session(300, 300) else { return };
     s.set_brush_size(0.5);
     s.stroke_begin(PointerKind::Finger, vec![sample(20.0, 150.0, 0.0)]);
@@ -8199,7 +8197,7 @@ fn pictures_of_the_layers_made_again_in_kept_textures_show_what_changed() {
 
 #[test]
 fn text_is_drawn_inside_its_box_and_as_it_is_set() {
-    let regular = include_bytes!("../../../android/app/src/main/assets/fonts/Inter-Regular.ttf");
+    let regular = include_bytes!("../../../assets/shared/fonts/Inter-Regular.ttf");
     assert_eq!(crate::add_text_font(regular.to_vec()), vec!["Inter".to_owned()]);
     assert!(crate::text_families().contains(&"Inter".to_owned()));
     let (w, h) = (600u32, 400u32);
@@ -8258,7 +8256,7 @@ b"
 
 #[test]
 fn the_caret_and_chosen_letters_stand_where_the_text_is_drawn() {
-    let regular = include_bytes!("../../../android/app/src/main/assets/fonts/Inter-Regular.ttf");
+    let regular = include_bytes!("../../../assets/shared/fonts/Inter-Regular.ttf");
     crate::add_text_font(regular.to_vec());
     let plain = crate::TextInfo {
         text: "Hello
@@ -8321,7 +8319,7 @@ fn imported_fonts_are_kept_in_their_folder_and_offered() {
     // nowhere to keep them yet
     assert!(crate::import_text_font(vec![1, 2, 3], "Nothing.ttf".into()).is_none());
     crate::set_text_font_folder(dir.to_string_lossy().into_owned());
-    let inter = include_bytes!("../../../android/app/src/main/assets/fonts/Inter-Regular.ttf").to_vec();
+    let inter = include_bytes!("../../../assets/shared/fonts/Inter-Regular.ttf").to_vec();
     let kept = crate::import_text_font(inter, "My Font!.ttf".into()).unwrap();
     assert_eq!(kept.name, "My Font");
     assert!(kept.family.starts_with("file:") && dir.join("My Font.ttf").is_file());
@@ -8330,8 +8328,8 @@ fn imported_fonts_are_kept_in_their_folder_and_offered() {
     assert!(crate::import_text_font(b"not a font".to_vec(), "Bad".into()).is_none());
     assert!(!dir.join("Bad.ttf").exists());
     // a font imported under a name kept already never overwrites it
-    let regular = include_bytes!("../../../android/app/src/main/assets/fonts/Inter-Regular.ttf").to_vec();
-    let bold = include_bytes!("../../../android/app/src/main/assets/fonts/Inter-Bold.ttf").to_vec();
+    let regular = include_bytes!("../../../assets/shared/fonts/Inter-Regular.ttf").to_vec();
+    let bold = include_bytes!("../../../assets/shared/fonts/Inter-Bold.ttf").to_vec();
     let first = crate::import_text_font(regular.clone(), "Same.ttf".into()).unwrap();
     // the same file again: the same typeface, one file
     assert_eq!(crate::import_text_font(regular.clone(), "Same.ttf".into()), Some(first.clone()));
@@ -8372,7 +8370,7 @@ fn brushes_read_apart_are_added_once_where_they_belong() {
 
 #[test]
 fn text_with_negative_leading_keeps_its_letters_in_its_box() {
-    crate::add_text_font(include_bytes!("../../../android/app/src/main/assets/fonts/Inter-Regular.ttf").to_vec());
+    crate::add_text_font(include_bytes!("../../../assets/shared/fonts/Inter-Regular.ttf").to_vec());
     // as Android lays it out: the leading only between lines
     let plain = crate::text_box(text_info("Hello"));
     let tight = crate::text_box(crate::TextInfo { leading: -0.5, ..text_info("Hello") });
@@ -8383,7 +8381,7 @@ fn text_with_negative_leading_keeps_its_letters_in_its_box() {
 
 #[test]
 fn the_caret_in_capitals_follows_letters_that_become_two() {
-    crate::add_text_font(include_bytes!("../../../android/app/src/main/assets/fonts/Inter-Regular.ttf").to_vec());
+    crate::add_text_font(include_bytes!("../../../assets/shared/fonts/Inter-Regular.ttf").to_vec());
     // "ß" shows as "SS": the caret after it stands after both
     let caps = crate::TextInfo { all_caps: true, ..text_info("straße") };
     let shown = text_info("STRASSE");
@@ -8418,7 +8416,7 @@ fn text_places_count_between_utf16_and_characters() {
 fn a_long_run_of_mixed_work_undoes_to_nothing_and_redoes_to_the_end() {
     use crate::Adjustment;
     use crate::transform::TransformHandle;
-    crate::add_text_font(include_bytes!("../../../android/app/src/main/assets/fonts/Inter-Regular.ttf").to_vec());
+    crate::add_text_font(include_bytes!("../../../assets/shared/fonts/Inter-Regular.ttf").to_vec());
     for seed in [3u32, 11, 29] {
         let Some(s) = session(160, 160) else { return };
         s.shared.lock().canvas.as_mut().unwrap().set_cache_composites(true);
@@ -8647,7 +8645,7 @@ fn layers_settings_and_selections_paged_out_undo_and_redo_whole() {
 
 #[test]
 fn a_mixed_artwork_saved_and_opened_again_shows_the_same() {
-    crate::add_text_font(include_bytes!("../../../android/app/src/main/assets/fonts/Inter-Regular.ttf").to_vec());
+    crate::add_text_font(include_bytes!("../../../assets/shared/fonts/Inter-Regular.ttf").to_vec());
     for seed in [7u32, 31] {
         let Some(s) = session(120, 120) else { return };
         s.set_brush_size(0.3);
@@ -8733,7 +8731,7 @@ fn a_mixed_artwork_saved_and_opened_again_shows_the_same() {
 
 #[test]
 fn a_mixed_artwork_through_a_layered_package_comes_back_the_same() {
-    crate::add_text_font(include_bytes!("../../../android/app/src/main/assets/fonts/Inter-Regular.ttf").to_vec());
+    crate::add_text_font(include_bytes!("../../../assets/shared/fonts/Inter-Regular.ttf").to_vec());
     for seed in [13u32, 58] {
         let Some(s) = session(120, 120) else { return };
         s.set_brush_size(0.3);
@@ -9131,7 +9129,7 @@ fn a_crop_drops_what_was_undone_before_it() {
 
 #[test]
 fn text_work_among_other_work_undoes_and_redoes_whole() {
-    crate::add_text_font(include_bytes!("../../../android/app/src/main/assets/fonts/Inter-Regular.ttf").to_vec());
+    crate::add_text_font(include_bytes!("../../../assets/shared/fonts/Inter-Regular.ttf").to_vec());
     for seed in [4u32, 61] {
         let Some(s) = session(120, 120) else { return };
         s.set_brush_size(0.3);

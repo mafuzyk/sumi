@@ -26,7 +26,7 @@ static STAMPS: std::sync::Mutex<Option<((Option<u32>, Option<u64>, [u32; 3], usi
 static OUTLINES: std::sync::Mutex<Option<((Option<u32>, Option<u64>, u32, u32), Vec<Vec<f32>>)>> =
     std::sync::Mutex::new(None);
 
-#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct BrushInfo {
     pub set: u32,
     pub index: u32,
@@ -34,7 +34,7 @@ pub struct BrushInfo {
 }
 
 /// A brush in the Recent set: where it is in the library, and whether it is pinned there.
-#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct RecentBrush {
     pub set: u32,
     pub index: u32,
@@ -42,7 +42,7 @@ pub struct RecentBrush {
     pub pinned: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct BrushSetInfo {
     pub name: String,
     pub brushes: Vec<BrushInfo>,
@@ -56,7 +56,6 @@ pub struct BrushSetInfo {
 pub const NOTCH_NEAR: f32 = 0.04;
 pub const NOTCH_MOST: usize = 4;
 
-#[uniffi::export]
 impl CanvasSession {
     pub fn brush_library(&self) -> Vec<BrushSetInfo> {
         let st = self.shared.lock();

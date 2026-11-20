@@ -55,7 +55,6 @@ fn of_hex(v: u32) -> [f32; 3] {
 
 /// P3 hue (0..1), saturation and value as a canvas colour (0xRRGGBB): as it is in P3 (`p3`),
 /// else in sRGB, clipped.
-#[uniffi::export]
 pub fn p3_hsv_to_rgb(h: f32, s: f32, v: f32, p3: bool) -> u32 {
     if p3 {
         let [r, g, b] = hsv_to_rgb([h, s, v]);
@@ -77,14 +76,12 @@ pub fn p3_hsv_of(rgb: u32, p3: bool) -> [f32; 3] {
 }
 
 /// [`p3_hsv_of`] as three values: hue, saturation and value.
-#[uniffi::export]
 pub fn rgb_to_p3_hsv(rgb: u32, p3: bool) -> Vec<f32> {
     p3_hsv_of(rgb, p3).to_vec()
 }
 
 /// Harmony's wheel at value `v`, `side` pixels square, for a canvas in P3 (`p3`) or sRGB: hue
 /// anticlockwise from the right, saturation outwards, a pixel's soft edge; premultiplied RGBA.
-#[uniffi::export]
 pub fn harmony_wheel(v: f32, side: u32, p3: bool) -> Vec<u8> {
     let side = side.min(4096) as usize;
     // each pixel's hue, saturation and edge, kept for the size
@@ -169,20 +166,17 @@ pub fn disc_to_square(u: f32, v: f32) -> [f32; 2] {
 }
 
 /// [`square_to_disc`] as two values.
-#[uniffi::export]
 pub fn square_to_disc_point(x: f32, y: f32) -> Vec<f32> {
     square_to_disc(x, y).to_vec()
 }
 
 /// [`disc_to_square`] as two values.
-#[uniffi::export]
 pub fn disc_to_square_point(u: f32, v: f32) -> Vec<f32> {
     disc_to_square(u, v).to_vec()
 }
 
 /// The disc picker's saturation and brightness for `hue`, `side` pixels square, with a soft edge;
 /// premultiplied RGBA.
-#[uniffi::export]
 pub fn disc_picture(hue: f32, side: u32) -> Vec<u8> {
     let side = side.min(4096) as usize;
     // each pixel's saturation, brightness and edge, kept for the size
@@ -227,7 +221,6 @@ fn triangle_parts(x: f32, y: f32) -> [f32; 3] {
 }
 
 /// Where saturation `s` and brightness `v` sit in the triangle picker's square (0..1, y down).
-#[uniffi::export]
 pub fn triangle_point(s: f32, v: f32) -> Vec<f32> {
     let (s, v) = (s.clamp(0.0, 1.0), v.clamp(0.0, 1.0));
     let [p, w, k] = triangle_corners();
@@ -237,7 +230,6 @@ pub fn triangle_point(s: f32, v: f32) -> Vec<f32> {
 
 /// The saturation and brightness at a point of the triangle picker's square (0..1, y down); one
 /// outside the triangle is taken at its edge.
-#[uniffi::export]
 pub fn triangle_sv(x: f32, y: f32) -> Vec<f32> {
     let parts = triangle_parts(x, y).map(|part| part.max(0.0));
     let sum: f32 = parts.iter().sum();
@@ -248,7 +240,6 @@ pub fn triangle_sv(x: f32, y: f32) -> Vec<f32> {
 
 /// The triangle picker's picture for `hue`, `side` pixels square: saturation and brightness
 /// between the pure hue, white and black, with a soft edge; premultiplied RGBA.
-#[uniffi::export]
 pub fn triangle_picture(hue: f32, side: u32) -> Vec<u8> {
     let side = side.min(4096) as usize;
     let n = side as f32;

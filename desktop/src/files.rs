@@ -108,12 +108,10 @@ pub(crate) enum ClipChanges {
 
 impl ClipChanges {
     /// What the core's pre-flight answered: its warnings, or the refusal it stopped on.
-    pub(crate) fn of(preflight: Result<Vec<String>, sumi_core::MobileError>) -> ClipChanges {
+    pub(crate) fn of(preflight: Result<Vec<String>, sumi_core::CanvasError>) -> ClipChanges {
         match preflight {
             Ok(lines) => ClipChanges::Kept(lines),
-            Err(sumi_core::MobileError::File { reason } | sumi_core::MobileError::Window { reason }) => {
-                ClipChanges::Refused(reason)
-            }
+            Err(sumi_core::CanvasError::File { reason }) => ClipChanges::Refused(reason),
         }
     }
 
@@ -1446,7 +1444,7 @@ mod tests {
 
     #[test]
     fn a_refused_preflight_line_is_the_refusal_itself() {
-        let refused = ClipChanges::of(Err(sumi_core::MobileError::File {
+        let refused = ClipChanges::of(Err(sumi_core::CanvasError::File {
             reason: "Krita cannot represent the clipping the layer \"Ink\" holds".to_owned(),
         }));
         assert_eq!(refused.line(), "Krita cannot represent the clipping the layer \"Ink\" holds");

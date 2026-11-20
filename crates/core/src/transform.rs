@@ -10,7 +10,7 @@ use sumi_gpu::Resample;
 use crate::{CanvasSession, State};
 
 /// How transformed pixels are resampled.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Interpolation {
     Nearest,
     Bilinear,
@@ -28,7 +28,7 @@ impl From<Interpolation> for Resample {
 }
 
 /// How the box's handles change the content.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TransformKind {
     Freeform,
     Uniform,
@@ -48,7 +48,7 @@ impl From<TransformKind> for TransformMode {
 }
 
 /// What a drag on the box holds.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TransformHandle {
     /// 0 top left, 1 top right, 2 bottom right, 3 bottom left.
     Corner {
@@ -83,7 +83,7 @@ impl From<TransformHandle> for Handle {
 }
 
 /// The transform toolbar's one-tap changes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TransformAction {
     FlipHorizontal,
     FlipVertical,
@@ -97,7 +97,7 @@ pub enum TransformAction {
 /// What pulls a moved or turned box: magnetics (15° steps), and snapping onto the canvas's
 /// edges and centre within `distance` points while the drag is no faster than `velocity` points
 /// a frame.
-#[derive(Clone, Copy, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GuideSettings {
     pub magnetics: bool,
     pub snapping: bool,
@@ -118,7 +118,7 @@ const LOCK_AFTER_PT: f32 = 2.0;
 /// in canvas pixels, and whether there is a change to take back. With a warp, also its 16 control
 /// points (32 numbers, row by row) and its lines at the thirds (eight lines of
 /// [`GRID_SAMPLES`] + 1 points each: four across, then four down); empty otherwise.
-#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct TransformBox {
     pub corners: Vec<f32>,
     pub can_undo: bool,
@@ -367,7 +367,6 @@ fn on_quad([a, b, c, d]: [Vec2; 4], p: Vec2) -> bool {
     sides.iter().all(|&s| s >= 0.0) || sides.iter().all(|&s| s <= 0.0)
 }
 
-#[uniffi::export]
 impl CanvasSession {
     /// Starts transforming the current layer and returns the box around what it holds; none when
     /// there is nothing to transform (the layer is empty, locked or hidden). A transform already
@@ -689,7 +688,7 @@ const MESH_GRAB_RADIUS: f32 = 15.0;
 /// The transform box on screen, in window pixels (x, y pairs): its corners (top left, top right,
 /// bottom right, bottom left), the middles of its edges (top, right, bottom, left), the rotate node
 /// above it, the node below it that turns the box alone, and the box's up direction.
-#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ScreenBox {
     pub corners: Vec<f32>,
     pub edges: Vec<f32>,
@@ -705,14 +704,12 @@ fn to_screen(x: f32, y: f32, m: &[f32]) -> Option<(f32, f32)> {
 }
 
 /// The warp's control points a touch can take: the corners, or all 16 with the advanced mesh.
-#[uniffi::export]
 pub fn shown_mesh_points(advanced: bool) -> Vec<u8> {
     if advanced { (0..16).collect() } else { vec![0, 3, 12, 15] }
 }
 
 /// Where a box with `corners` (canvas pixels) shows through the view `view`; `density` is pixels a
 /// point.
-#[uniffi::export]
 pub fn screen_box(corners: Vec<f32>, view: Vec<f32>, density: f32) -> Option<ScreenBox> {
     let pts: Vec<(f32, f32)> =
         corners.as_chunks::<2>().0.iter().take(4).map(|&[x, y]| to_screen(x, y, &view)).collect::<Option<_>>()?;
@@ -743,7 +740,6 @@ pub fn screen_box(corners: Vec<f32>, view: Vec<f32>, density: f32) -> Option<Scr
 
 /// The handle a touch at window point (`x`, `y`) takes on the box `shown`: the nearest node within
 /// reach, otherwise a move.
-#[uniffi::export]
 pub fn handle_at(shown: ScreenBox, x: f32, y: f32, density: f32) -> TransformHandle {
     let point = |v: &[f32], i: usize| Some((*v.get(2 * i)?, *v.get(2 * i + 1)?));
     let mut nodes =
@@ -766,7 +762,6 @@ pub fn handle_at(shown: ScreenBox, x: f32, y: f32, density: f32) -> TransformHan
 
 /// In a warp with control points `mesh` (canvas pixels) seen through `view`: the shown control
 /// point a touch at window point (`x`, `y`) takes, otherwise the surface under it (a move).
-#[uniffi::export]
 pub fn mesh_handle_at(mesh: Vec<f32>, view: Vec<f32>, x: f32, y: f32, density: f32, advanced: bool) -> TransformHandle {
     if mesh.len() < 32 {
         return TransformHandle::Move;

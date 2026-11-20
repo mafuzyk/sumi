@@ -9,7 +9,6 @@ use sumi_engine::geom::IRect;
 use crate::CanvasSession;
 use crate::plugin_run::MOST_BETWEEN_MEMORY;
 
-#[uniffi::export]
 impl CanvasSession {
     /// Animation Assist's In-between (a plugin's): a frame drawn between frame `id` and the next by
     /// the plugin on the `inbetween` hook, put just after `id` and made current, as one undo step:

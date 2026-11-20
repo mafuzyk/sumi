@@ -104,7 +104,6 @@ pub(crate) fn painted_rect(pixels: &[u8], width: u32) -> Option<IRect> {
     (x0 < x1).then(|| IRect::new(n(x0), n(y0), n(x1), n(y1)))
 }
 
-#[uniffi::export]
 impl CanvasSession {
     /// Selects what is on layer `id` (by its coverage), as one undo step.
     pub fn select_layer_contents(&self, id: u64) -> bool {

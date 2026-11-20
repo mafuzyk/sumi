@@ -14,10 +14,9 @@ pub const FADE: f32 = 0.09;
 pub(crate) const FLOOD_HERE_MOST: usize = 8;
 
 /// The most pixels of `pixels` a flood fills on its own thread before going over to every core
-/// ([`FLOOD_HERE_MOST`]). Never on Android: on the Legion every core was slower than one (a 4K
-/// flood 23-25 ms against 19, the screen off), though on a computer 2.5 times quicker.
+/// ([`FLOOD_HERE_MOST`]). Desktop can parallelize larger flood fills.
 pub(crate) fn flood_here_most(pixels: usize) -> usize {
-    if cfg!(target_os = "android") { usize::MAX } else { pixels / FLOOD_HERE_MOST }
+    pixels / FLOOD_HERE_MOST
 }
 
 /// The most pixels a flood works each pixel's reach out for (8K x 4K): past it, the memory the

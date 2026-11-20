@@ -49,7 +49,6 @@ pub(crate) fn radius(size: f32) -> f32 {
 }
 
 /// How far a Liquify brush at `size` (0..1) reaches, canvas pixels: for showing it.
-#[uniffi::export]
 pub fn liquify_reach(size: f32) -> f32 {
     radius(size)
 }

@@ -1,14 +1,8 @@
-"""Writes the third-party licences the apps ship with: the Android app's to its assets
-(licenses.txt), for the settings page's Licenses screen, and the desktop app's to
-desktop/licenses.txt, for Help's Licences. Run from anywhere after changing dependencies:
+"""Generate the third-party licence manifest for the desktop Sumi app.
 
-    python tools/licenses.py
-
-Rust crates: those the Android library links (normal dependencies for aarch64-linux-android),
-or the desktop app on any of its platforms; proc macros and build-only crates don't ship. Each
-comes with its own licence and notice files. Texts shared by many crates (the Apache and Mozilla
-licences) are written once, at the end.
-Android libraries: listed by hand below (all under the Apache License 2.0)."""
+Run from the repository root: python tools/licenses.py. Source licences and credits
+are preserved, even when a platform-specific integration is no longer shipped.
+"""
 
 import json
 import os
@@ -17,21 +11,9 @@ import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OUT = os.path.join(ROOT, 'android', 'app', 'src', 'main', 'assets', 'licenses.txt')
-TARGET = 'aarch64-linux-android'
 DESKTOP_OUT = os.path.join(ROOT, 'desktop', 'licenses.txt')
 DESKTOP_TARGETS = ['x86_64-pc-windows-msvc', 'aarch64-apple-darwin', 'x86_64-unknown-linux-gnu']
 LICENCE_FILE = re.compile(r'^(licen[cs]e|copying|notice|unlicense)', re.IGNORECASE)
-
-# The Android side, from app/build.gradle.kts and what those pull in.
-ANDROID = [
-    ('Android Jetpack (AndroidX core, activity, lifecycle, input motion prediction)', 'https://developer.android.com/jetpack'),
-    ('Jetpack Compose (UI, Material 3)', 'https://developer.android.com/jetpack/compose'),
-    ('Kotlin standard library and kotlinx.coroutines', 'https://kotlinlang.org'),
-    ('JetBrains annotations, JSpecify, Guava ListenableFuture', 'https://github.com/google/guava'),
-    ('JNA (Java Native Access), used under the Apache License 2.0 of its dual licence', 'https://github.com/java-native-access/jna'),
-]
-
 
 # standard texts for crates that ship none, by the name in their licence expression
 STANDARD = [('Apache License 2.0', 'Apache-2.0'), ('Mozilla Public License 2.0', 'MPL-2.0')]
@@ -200,16 +182,6 @@ def main():
             "The colour panel's OKLab model is Okhsl, worked out after Björn Ottosson's code",
             '(bottosson.github.io/posts/colorpicker), under the MIT License:', '',
             MIT.format(holders='2021 Björn Ottosson'), '']
-
-    crates, shared = linked('sumi-core', [TARGET]), {}
-    lines = head + ['The 3D view environments are panoramas from Poly Haven (polyhaven.com), under CC0 (public',
-                    'domain); their authors are listed in assets/environments/README.md.', '']
-    lines += crate_lines(crates, shared)
-    lines += ['== Android libraries ==', '']
-    for name, url in ANDROID:
-        lines += [f'{name}: Apache License 2.0', url, '']
-    write(OUT, lines, shared)
-    print(f'{len(crates)} crates, {len(ANDROID)} Android groups -> {os.path.relpath(OUT, ROOT)}')
 
     crates, shared = linked('sumi-desktop', DESKTOP_TARGETS), {}
     write(DESKTOP_OUT, head + crate_lines(crates, shared), shared)

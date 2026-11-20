@@ -8,7 +8,7 @@ use crate::{CanvasSession, State};
 
 /// What bringing in a moving picture's frames did: how many came in as layers, and whether the
 /// canvas ran out of room for more.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Record)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FramesInserted {
     pub added: u32,
     pub full: bool,
@@ -160,7 +160,6 @@ pub(crate) fn flipped(pixels: &[u8], width: usize, horizontal: bool) -> Vec<u8> 
     }
 }
 
-#[uniffi::export]
 impl CanvasSession {
     /// The current layer within the selection, to paste later.
     pub fn copy_layer(&self) -> Option<ThumbnailImage> {

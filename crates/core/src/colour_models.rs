@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex};
 use crate::hues::{HueControl, SLIDER_HUES, hue_at, hue_position};
 use crate::pickers::{byte, disc_to_square, hsv_to_rgb, picture_rows, rgb_to_hsv, square_to_disc};
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum ColourModel {
     #[default]
     Hsb,
@@ -42,7 +42,7 @@ const MOST_SIDE: u32 = 4096;
 
 /// A slider's track: where its knob stands (0..1) and the colours along it (0xRRGGBB), evenly
 /// spaced.
-#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ColourTrack {
     pub place: f32,
     pub colours: Vec<u32>,
@@ -311,7 +311,7 @@ impl ColourModel {
 
 /// Where a colour stands in a colour model, kept while it is still the colour: worked out afresh
 /// from a grey or black, its hue and saturation would be lost.
-#[derive(Debug, Default, uniffi::Object)]
+#[derive(Debug, Default)]
 pub struct ColourPlace {
     kept: Mutex<Option<(ColourModel, u32, [f32; 3])>>,
 }
@@ -346,9 +346,7 @@ impl ColourPlace {
     }
 }
 
-#[uniffi::export]
 impl ColourPlace {
-    #[uniffi::constructor]
     pub fn new() -> Arc<ColourPlace> {
         Arc::new(ColourPlace::default())
     }
@@ -513,142 +511,119 @@ fn luma([r, g, b]: [f32; 3]) -> f32 {
 // For the apps' bindings: the colours as 0xRRGGBB, a colour's channels as separate values.
 
 /// The colour models, in the menu's order.
-#[uniffi::export]
 pub fn colour_models() -> Vec<ColourModel> {
     ColourModel::ALL.to_vec()
 }
 
 /// [`ColourModel::label`].
-#[uniffi::export]
 pub fn colour_model_label(model: ColourModel) -> String {
     model.label().to_owned()
 }
 
 /// [`ColourModel::letters`].
-#[uniffi::export]
 pub fn colour_model_letters(model: ColourModel) -> Vec<String> {
     model.letters().map(str::to_owned).to_vec()
 }
 
 /// [`ColourModel::key`].
-#[uniffi::export]
 pub fn colour_model_key(model: ColourModel) -> String {
     model.key().to_owned()
 }
 
 /// [`ColourModel::of_key`].
-#[uniffi::export]
 pub fn colour_model_of_key(key: String) -> Option<ColourModel> {
     ColourModel::of_key(&key)
 }
 
 /// The colour at `h`, `s`, `t` in `model` as 0xRRGGBB.
-#[uniffi::export]
 pub fn colour_model_rgb(model: ColourModel, h: f32, s: f32, t: f32) -> u32 {
     hex(model.to_rgb([h, s, t]))
 }
 
 /// [`ColourModel::to_hsv`] as three values.
-#[uniffi::export]
 pub fn colour_model_hsv(model: ColourModel, h: f32, s: f32, t: f32, hue: f32) -> Vec<f32> {
     model.to_hsv([h, s, t], hue).to_vec()
 }
 
 /// [`ColourModel::pure`] as 0xRRGGBB.
-#[uniffi::export]
 pub fn colour_model_pure(model: ColourModel, hue: f32) -> u32 {
     hex(model.pure(hue))
 }
 
 /// The ring's colours (0xRRGGBB) at `n` turns evenly from 0 to 1 (anticlockwise from the right).
-#[uniffi::export]
 pub fn colour_model_ring(model: ColourModel, n: u32) -> Vec<u32> {
     let last = n.max(2) - 1;
     (0..=last).map(|i| hex(model.pure(model.ring_hue(i as f32 / last as f32)))).collect()
 }
 
 /// [`ColourModel::ring_hue`].
-#[uniffi::export]
 pub fn colour_model_ring_hue(model: ColourModel, turn: f32) -> f32 {
     model.ring_hue(turn)
 }
 
 /// [`ColourModel::ring_turn`].
-#[uniffi::export]
 pub fn colour_model_ring_turn(model: ColourModel, hue: f32) -> f32 {
     model.ring_turn(hue)
 }
 
 /// [`ColourModel::slid`] as three values.
-#[uniffi::export]
 pub fn colour_model_slid(model: ColourModel, h: f32, s: f32, t: f32, channel: u32, to: f32) -> Vec<f32> {
     model.slid([h, s, t], channel as usize, to).to_vec()
 }
 
 /// [`ColourModel::along`].
-#[uniffi::export]
 pub fn colour_model_along(model: ColourModel, h: f32, s: f32, t: f32, channel: u32, n: u32) -> Vec<u32> {
     model.along([h, s, t], channel as usize, n as usize)
 }
 
 /// [`ColourModel::tracks`].
-#[uniffi::export]
 pub fn colour_model_tracks(model: ColourModel, h: f32, s: f32, t: f32) -> Vec<ColourTrack> {
     model.tracks([h, s, t]).to_vec()
 }
 
 /// [`ColourModel::disc_point`] as two values.
-#[uniffi::export]
 pub fn colour_model_disc_point(model: ColourModel, h: f32, s: f32, t: f32) -> Vec<f32> {
     model.disc_point([h, s, t]).to_vec()
 }
 
 /// [`ColourModel::disc_pick`] as three values.
-#[uniffi::export]
 pub fn colour_model_disc_pick(model: ColourModel, h: f32, s: f32, t: f32, u: f32, v: f32) -> Vec<f32> {
     model.disc_pick([h, s, t], [u, v]).to_vec()
 }
 
 /// [`ColourModel::disc_key`].
-#[uniffi::export]
 pub fn colour_model_disc_key(model: ColourModel, h: f32, s: f32, t: f32) -> u32 {
     model.disc_key([h, s, t])
 }
 
 /// [`ColourModel::disc_picture`].
-#[uniffi::export]
 pub fn colour_model_disc_picture(model: ColourModel, h: f32, s: f32, t: f32, side: u32) -> Vec<u8> {
     model.disc_picture([h, s, t], side)
 }
 
 /// [`ColourModel::square_picture`].
-#[uniffi::export]
 pub fn colour_model_square_picture(model: ColourModel, hue: f32, side: u32) -> Vec<u8> {
     model.square_picture(hue, side)
 }
 
 /// How many pixels across Classic's square's picture in a model is for a square `side` pixels
 /// across: as many, at most [`MODEL_SQUARE`].
-#[uniffi::export]
 pub fn colour_model_square_side(side: u32) -> u32 {
     side.clamp(1, MODEL_SQUARE)
 }
 
 /// The colour held as hue, saturation and brightness in OKLab: its lightness, a and b.
-#[uniffi::export]
 pub fn oklab_of_hsv(h: f32, s: f32, v: f32) -> Vec<f32> {
     oklab_of(hsv_to_rgb([h, s, v])).to_vec()
 }
 
 /// [`oklab_tracks`] at OKLab `l`, `a`, `b`.
-#[uniffi::export]
 pub fn oklab_value_tracks(l: f32, a: f32, b: f32) -> Vec<ColourTrack> {
     oklab_tracks([l, a, b]).to_vec()
 }
 
 /// OKLab `l`, `a`, `b` with channel `channel` slid to `to` ([`oklab_slid`]), as hue, saturation and
 /// brightness; a grey keeps `hue`.
-#[uniffi::export]
 pub fn oklab_value_slid(l: f32, a: f32, b: f32, channel: u32, to: f32, hue: f32) -> Vec<f32> {
     let [h, s, v] = rgb_to_hsv(oklab_to_rgb(oklab_slid([l, a, b], channel as usize, to)));
     vec![if s > 0.0 { h } else { hue }, s, v]

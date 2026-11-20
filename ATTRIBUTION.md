@@ -11,13 +11,12 @@ them.
 
 | Path | Title | Author | Source | Licence |
 |---|---|---|---|---|
-| `android/app/src/main/assets/fonts/Inter-{Regular,Medium,SemiBold,Bold}.ttf` | Inter 4.1 (interface font) | The Inter Project Authors | <https://github.com/rsms/inter/releases/tag/v4.1> (`Inter-4.1.zip`, `extras/ttf/`; `SOURCE.md` beside them) | SIL OFL 1.1, `Inter-OFL.txt` |
-| `android/app/src/main/java/app/sumi/ui/LucideIcons.kt` (the interface icons as Lucide draws them, kept beside ours) | Lucide icons, lucide-static 1.63.0 | Lucide Icons and Contributors (those derived from Feather: Cole Bemis) | <https://github.com/lucide-icons/lucide>; each icon's paths moved and scaled into the frame it is shown in, at the size shown | ISC (Feather-derived also MIT), [`LICENSE-lucide.txt`](android/app/src/main/assets/icons/LICENSE-lucide.txt) |
-| `assets/icons/sumi/*.svg`, and every icon in `android/app/src/main/java/app/sumi/ui/Icons.kt` (`PcIcons`: the bar, toolbars, panels and menus, the blend mode glyphs and the 48 brush set icons) | Interface icons | ProCraft contributors | Original work, drawn from the idea to [`docs/icons/STYLE_GUIDE.md`](docs/icons/STYLE_GUIDE.md) by `tools/icons/draw_icons.py`; placed by the measured slots in `assets/icons/slots.tsv` | MIT OR Apache-2.0 |
-| `android/app/src/main/assets/environments/*.hdr` | 3D view light panoramas (11), halved to 512 x 256 and scaled by `tools/env/make_env.py` | Sergej Majboroda, Greg Zaal, Andreas Mischok, Rico Cilliers (per file in the folder's `README.md`) | <https://polyhaven.com> | CC0 1.0 |
-| `assets/app-icon/sumi-{1024,512,256}.png`, `assets/app-icon/sumi.ico`, `assets/app-icon/hicolor/*/apps/sumi.png`, `android/app/src/main/res/drawable-*dpi/ic_launcher_{foreground,monochrome}.png`, `android/app/src/main/res/drawable-nodpi/sumi_mark.png`, `android/app/src/main/res/mipmap-anydpi/ic_launcher.xml` | App icon assets | ProCraft contributors & Sumi contributors | Original work (`tools/app-icon/make_icon.py` and desktop enso tile); see [`assets/app-icon/README.md`](assets/app-icon/README.md) | MIT OR Apache-2.0 |
-| `android/app/src/main/res/drawable/widget_back.xml`, `android/app/src/main/res/drawable-v31/widget_back.xml` | Recent-artwork widget background | ProCraft contributors | Original work | MIT OR Apache-2.0 |
-| `docs/images/{canvas,layers,brushes,studio,colour,actions,adjust,transform}.jpg`, `docs/images/demo.webp`, `docs/images/demo.mp4` | The README's screenshots and demo: Sumi on a tablet, painting *Dusk* | ProCraft contributors | Original work: the painting made in the app by `tools/showcase/paint_dusk2.py`, captured from the screen | MIT OR Apache-2.0 |
+| `assets/shared/fonts/Inter-{Regular,Medium,SemiBold,Bold}.ttf` | Inter 4.1 (interface font) | The Inter Project Authors | <https://github.com/rsms/inter/releases/tag/v4.1> (`Inter-4.1.zip`, `extras/ttf/`; `SOURCE.md` beside them) | SIL OFL 1.1, `Inter-OFL.txt` |
+| `assets/icons/source/LucideIcons.kt` (the interface icons as Lucide draws them, kept beside ours) | Lucide icons, lucide-static 1.63.0 | Lucide Icons and Contributors (those derived from Feather: Cole Bemis) | <https://github.com/lucide-icons/lucide>; each icon's paths moved and scaled into the frame it is shown in, at the size shown | ISC (Feather-derived also MIT), [`LICENSE-lucide.txt`](assets/shared/icons/LICENSE-lucide.txt) |
+| `assets/icons/sumi/*.svg`, and every icon in `assets/icons/source/Icons.kt` (`PcIcons`: the bar, toolbars, panels and menus, the blend mode glyphs and the 48 brush set icons) | Interface icons | ProCraft contributors | Original work, drawn from the idea to [`docs/icons/STYLE_GUIDE.md`](docs/icons/STYLE_GUIDE.md) by `tools/icons/draw_icons.py`; placed by the measured slots in `assets/icons/slots.tsv` | MIT OR Apache-2.0 |
+| `assets/shared/environments/*.hdr` | 3D view light panoramas (11), halved to 512 x 256 and scaled by `tools/env/make_env.py` | Sergej Majboroda, Greg Zaal, Andreas Mischok, Rico Cilliers (per file in the folder's `README.md`) | <https://polyhaven.com> | CC0 1.0 |
+| `assets/app-icon/sumi-{1024,512,256}.png`, `assets/app-icon/sumi.ico`, `assets/app-icon/hicolor/*/apps/sumi.png` | App icon assets | ProCraft contributors & Sumi contributors | Original work (`tools/app-icon/make_icon.py` and desktop enso tile); see [`assets/app-icon/README.md`](assets/app-icon/README.md) | MIT OR Apache-2.0 |
+| `docs/images/{canvas,layers,brushes,studio,colour,actions,adjust,transform}.jpg`, `docs/images/demo.webp`, `docs/images/demo.mp4` | Historical Sumi tablet screenshots and the *Dusk* demo | ProCraft contributors | Original painting and screen recordings from the former tablet build, retained as documentation | MIT OR Apache-2.0 |
 | Brushes, brush shapes and grains | Made in code at run time (`crates/engine`) | ProCraft contributors | Original work | MIT OR Apache-2.0 |
 | `docs/images/discord-badge.svg` | The README's "Join us on Discord" badge | ProCraft contributors; the Discord mark from Simple Icons | Drawn to match the download badges beside it; the mark's path from <https://simpleicons.org> (simple-icons 13.21.0, `icons/discord.svg`) | MIT OR Apache-2.0; the mark CC0 1.0 (Discord's trademark, shown to link to the project's server) |
 
@@ -271,7 +270,7 @@ Our own among the rest: `ShapeArc`, and the outlines and shapes not listed above
 ## Libraries
 
 The libraries the app is built with, and their licences, are listed in
-[`android/app/src/main/assets/licenses.txt`](android/app/src/main/assets/licenses.txt) (made by `tools/licenses.py`) and shown in the
+[`desktop/licenses.txt`](desktop/licenses.txt) (made by `tools/licenses.py`) and shown in the
 app.
 
 `clip-core`, the CLIP STUDIO PAINT and Krita reader behind `crates/sumi-clip`, is

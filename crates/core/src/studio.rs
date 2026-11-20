@@ -16,7 +16,6 @@ use crate::{CanvasSession, PenSample, PointerKind, State, ToolKind};
 
 /// The curve through `points` (x, y pairs on the unit square) at `count` (2 to 1024) evenly
 /// spaced x from 0 to 1: the curve as strokes apply it, for drawing.
-#[uniffi::export]
 pub fn curve_samples(points: Vec<f32>, count: u32) -> Vec<f32> {
     let pts: Vec<Vec2> = points.as_chunks::<2>().0.iter().map(|&[x, y]| Vec2::new(x, y)).collect();
     let curve = Curve::new(&pts);
@@ -26,7 +25,7 @@ pub fn curve_samples(points: Vec<f32>, count: u32) -> Vec<f32> {
 
 /// A shipped shape or grain image: its name and its pixels (`TEXTURE_SIZE` square greyscale,
 /// white = paint).
-#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SourceImage {
     pub name: String,
     pub pixels: Vec<u8>,
@@ -34,7 +33,6 @@ pub struct SourceImage {
 
 /// The shipped shape images (or, `grain`, grain images after a blank one), in order: the source
 /// library.
-#[uniffi::export]
 pub fn source_library(grain: bool) -> Vec<SourceImage> {
     let images = if grain { textures::grains() } else { textures::shapes() };
     // the grains start with a blank one: plain white, no texture
@@ -52,7 +50,6 @@ pub fn source_library(grain: bool) -> Vec<SourceImage> {
 /// editor's Auto repeat, the image `scale` times across (1 to 4), turned `rotation_degrees`,
 /// faded at its edges over `overlap` of the way in (0..1) as sharply as `hardness` (0..1), into
 /// its shifted copy, turned round with `mirror`, fine detail apart with `pyramid`.
-#[uniffi::export]
 pub fn repeatable_source(
     pixels: Vec<u8>,
     scale: f32,
@@ -69,7 +66,6 @@ pub fn repeatable_source(
 
 /// A square source image at `source_size`, however big it is: what a brush always holds of it,
 /// and quick enough to make repeat as a slider moves. Anything else comes back as it was.
-#[uniffi::export]
 pub fn small_source(pixels: Vec<u8>) -> Vec<u8> {
     let n = pixels.len().isqrt();
     if n <= textures::TEXTURE_SIZE || n * n != pixels.len() {
@@ -82,7 +78,6 @@ pub fn small_source(pixels: Vec<u8>) -> Vec<u8> {
 /// shows through it counting as black), fitted into a square, centred. The square is as big as
 /// a brush file's image of that size would be, and `source_size` at the least. Empty if the
 /// pixels aren't that size.
-#[uniffi::export]
 pub fn source_from_picture(rgba: Vec<u8>, width: u32, height: u32) -> Vec<u8> {
     if width == 0 || height == 0 || rgba.len() as u64 != u64::from(width) * u64::from(height) * 4 {
         return Vec::new();
@@ -115,7 +110,6 @@ pub fn source_from_picture(rgba: Vec<u8>, width: u32, height: u32) -> Vec<u8> {
 /// What was cut or copied in the app (premultiplied, as a copy is) as a source image: only where it
 /// is painted, cut to that, its lightness over black, fitted into a square as
 /// [`source_from_picture`] fits a picture. Empty if nothing is painted.
-#[uniffi::export]
 pub fn source_from_copy(image: crate::layers::ThumbnailImage) -> Vec<u8> {
     let (w, h) = (image.width as usize, image.height as usize);
     if w == 0 || h == 0 || image.rgba.len() != w * h * 4 {
@@ -187,7 +181,7 @@ pub(crate) const RANDOMISED: &[(&str, f32, f32, bool)] = &[
 
 /// Which of a brush's images the studio's editors change: its shape, its grain, or what it paints a
 /// model's metalness or roughness through (tiled as the grain is, from the same library).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SourceKind {
     Shape,
     Grain,
@@ -205,7 +199,7 @@ impl SourceKind {
 /// What a studio slider's keypad offers besides typing its value: its own pressure curve
 /// (`pressure`), its own tilt (`tilt`) with the control of the switch that turns it on (empty: the
 /// slider is the tilt's own amount, always on) and of the angle it starts from.
-#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SliderExtrasInfo {
     pub pressure: bool,
     pub tilt: bool,
@@ -214,7 +208,6 @@ pub struct SliderExtrasInfo {
 }
 
 /// The keypad extras of the slider for studio control `key`.
-#[uniffi::export]
 pub fn slider_extras(key: String) -> SliderExtrasInfo {
     let e = sumi_engine::studio::slider_extras(&key);
     SliderExtrasInfo {
@@ -226,7 +219,6 @@ pub fn slider_extras(key: String) -> SliderExtrasInfo {
 }
 
 /// The edge of a shape or grain image, pixels.
-#[uniffi::export]
 pub fn source_size() -> u32 {
     textures::TEXTURE_SIZE as u32
 }
@@ -278,7 +270,6 @@ impl State {
     }
 }
 
-#[uniffi::export]
 impl CanvasSession {
     /// Opens the studio on the brush the current tool uses (a studio already open is kept);
     /// returns the brush's name.
@@ -814,7 +805,7 @@ fn material<'a>(
 /// The drawing pad while it is a sphere: the flat pad's strokes set aside (and whether they were
 /// its sample scribble), the preview once drawn, and the brush's material sources as last given
 /// to it (a key for each and its pixels).
-#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+#[allow(dead_code)]
 pub(crate) struct SpherePad {
     flat: Vec<(PointerKind, Vec<PenSample>)>,
     flat_sample: bool,
@@ -827,7 +818,7 @@ pub(crate) fn source_key(m: &MaterialSource) -> Option<u64> {
     m.source.as_ref().map(|s| s.id).or_else(|| m.image.map(|i| (1 << 63) | u64::from(i)))
 }
 
-#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+#[allow(dead_code)]
 impl State {
     /// Draws the pad as a sphere into `target` (`size`): [`SPHERE_RADIUS_PT`] round, in its
     /// middle, showing the canvas painted with the pad's brush, its metalness and roughness.
@@ -883,7 +874,7 @@ impl State {
 
 /// The studio's About page: who made the brush ("" for Sumi's own) with their picture and
 /// signature (PNG) if it has them, and when its reset point was made (seconds since 1970).
-#[derive(uniffi::Record)]
+
 pub struct StudioAbout {
     pub author: String,
     pub picture: Option<Vec<u8>>,

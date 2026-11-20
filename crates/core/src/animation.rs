@@ -11,7 +11,7 @@ use sumi_engine::formats::GifWriter;
 
 use crate::layers::ThumbnailImage;
 use crate::project::{file_error, thumbnail, write_atomically};
-use crate::{CanvasSession, MobileError};
+use crate::{CanvasError, CanvasSession};
 
 /// How much of an animated GIF's frames is drawn at once (a frame to a core), so a big canvas's
 /// export doesn't hold many full-size frames.
@@ -30,7 +30,6 @@ fn sequence(doc: &Document) -> Vec<LayerId> {
     frames(doc).into_iter().flat_map(|id| std::iter::repeat_n(id, 1 + holds(id))).collect()
 }
 
-#[uniffi::export]
 impl CanvasSession {
     /// The frames in playing order (indices into the frames), each as often as it is held.
     pub fn animation_sequence(&self) -> Vec<u32> {
@@ -86,7 +85,7 @@ impl CanvasSession {
         dither: bool,
         per_frame_palette: bool,
         transparent: bool,
-    ) -> Result<(), MobileError> {
+    ) -> Result<(), CanvasError> {
         let units = sequence(&self.shared.lock().doc);
         let delay = (100.0 / fps.clamp(0.1, 100.0)).round() as u16;
         // the frames made take it to 0.95 (sharing a palette, its look at them to 0.45 first), the
@@ -131,7 +130,7 @@ impl CanvasSession {
 
     /// The animation as a looping animated PNG at `path`, `fps` frames a second, scaled to fit
     /// `max_side` (0: full size), `transparent` leaving the background out.
-    pub fn export_apng(&self, path: String, max_side: u32, fps: f32, transparent: bool) -> Result<(), MobileError> {
+    pub fn export_apng(&self, path: String, max_side: u32, fps: f32, transparent: bool) -> Result<(), CanvasError> {
         let units = sequence(&self.shared.lock().doc);
         let count = u32::try_from(units.len()).unwrap_or(u32::MAX);
         let Some((&first, rest)) = units.split_first() else {
@@ -177,7 +176,7 @@ impl CanvasSession {
         units: &[LayerId],
         transparent: bool,
         max_side: u32,
-    ) -> Result<Option<GifWriter>, MobileError> {
+    ) -> Result<Option<GifWriter>, CanvasError> {
         // a held frame is drawn once, however many places it holds
         let mut seen = std::collections::HashSet::new();
         let units: Vec<LayerId> = units.iter().copied().filter(|u| seen.insert(*u)).collect();
@@ -203,7 +202,7 @@ impl CanvasSession {
         unit: LayerId,
         transparent: bool,
         max_side: u32,
-    ) -> Result<(u32, u32, Vec<u8>), MobileError> {
+    ) -> Result<(u32, u32, Vec<u8>), CanvasError> {
         let (w, h, rgba) = {
             let mut guard = self.shared.lock();
             let st = &mut *guard;
@@ -236,7 +235,7 @@ impl CanvasSession {
 }
 
 /// How playing goes on after the last frame.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AnimationPlayback {
     Loop,
     PingPong,
@@ -244,7 +243,7 @@ pub enum AnimationPlayback {
 }
 
 /// Animation Assist's settings, as the panel shows them.
-#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct AnimationSettings {
     pub fps: u32,
     pub onion_frames: u32,
@@ -281,7 +280,6 @@ impl From<&Animation> for AnimationSettings {
     }
 }
 
-#[uniffi::export]
 impl CanvasSession {
     /// Turns Animation Assist on (its settings as they start) or off, as an undo step.
     pub fn set_animation_assist(&self, on: bool) -> bool {
@@ -322,7 +320,6 @@ impl CanvasSession {
     }
 }
 
-#[uniffi::export]
 impl CanvasSession {
     /// Animation Assist's settings while it is on.
     pub fn animation_settings(&self) -> Option<AnimationSettings> {
@@ -489,7 +486,7 @@ fn lay_over(under: &mut [u8], top: &[u8], opacity: f32) {
 
 /// A step of playing: the place in the sequence shown next, and the way it is going (1 forward,
 /// -1 back).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Record)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PlayStep {
     pub at: u32,
     pub step: i32,
@@ -498,7 +495,6 @@ pub struct PlayStep {
 /// Where playing goes after place `at` of a sequence `len` long, moving `step`: on, round again
 /// (Loop), turned back (Ping-Pong), or none once a single pass ends (One Shot, or one frame to
 /// ping-pong).
-#[uniffi::export]
 pub fn animation_next_step(playback: AnimationPlayback, len: u32, at: u32, step: i32) -> Option<PlayStep> {
     let step = if step < 0 { -1 } else { 1 };
     let next = i64::from(at) + i64::from(step);
@@ -529,21 +525,18 @@ fn shown_fps(fps: f32) -> f32 {
 }
 
 /// The frame rate an animated export's slider gives at `fraction` (0..1) along it, as shown.
-#[uniffi::export]
 pub fn export_fps_at(fraction: f32) -> f32 {
     let t = if fraction.is_nan() { 0.0 } else { fraction.clamp(0.0, 1.0) };
     shown_fps(EXPORT_FPS_LEAST + (EXPORT_FPS_MOST - EXPORT_FPS_LEAST) * t.powf(EXPORT_FPS_CURVE))
 }
 
 /// Where along the slider (0..1) frame rate `fps` sits.
-#[uniffi::export]
 pub fn export_fps_fraction(fps: f32) -> f32 {
     let fps = if fps.is_nan() { EXPORT_FPS_LEAST } else { fps.clamp(EXPORT_FPS_LEAST, EXPORT_FPS_MOST) };
     ((fps - EXPORT_FPS_LEAST) / (EXPORT_FPS_MOST - EXPORT_FPS_LEAST)).powf(1.0 / EXPORT_FPS_CURVE)
 }
 
 /// The slider's value for frame rate `fps`: "0.5" under 1, "11" from 1 up.
-#[uniffi::export]
 pub fn export_fps_label(fps: f32) -> String {
     let fps = shown_fps(fps);
     if fps < 1.0 { format!("{fps:.1}") } else { format!("{fps:.0}") }
@@ -551,7 +544,7 @@ pub fn export_fps_label(fps: f32) -> String {
 
 /// A frame rate as a ratio, `frames` every `seconds` (0.1 a second: 1 every 10), so a video's
 /// frame times can be worked out exactly.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Record)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FrameRate {
     pub frames: u32,
     pub seconds: u32,
@@ -567,7 +560,6 @@ impl FrameRate {
 
 /// `fps` frames a second as a ratio, to a thousandth of a frame (at least a frame in 1000 seconds,
 /// at most 1000 frames a second).
-#[uniffi::export]
 pub fn frame_rate(fps: f32) -> FrameRate {
     let fps = if fps.is_nan() { 1.0 } else { fps.clamp(0.001, 1000.0) };
     let thousandths = ((fps * 1000.0).round() as u32).max(1);

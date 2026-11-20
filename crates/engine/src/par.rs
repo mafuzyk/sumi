@@ -6,9 +6,8 @@ pub fn cores() -> usize {
     std::thread::available_parallelism().map_or(1, |n| n.get()).clamp(1, 8)
 }
 
-/// How much memory work done side by side may hold at once (as many work together as fit): less
-/// on a tablet than on a computer.
-const BUDGET: usize = if cfg!(target_os = "android") { 256 << 20 } else { 1 << 30 };
+/// Maximum working memory for parallel image tasks on desktop.
+const BUDGET: usize = 1 << 30;
 
 /// `f` of each of `items`, worked out side by side on a few threads (each taking the next item
 /// there is), in their order; none for one whose thread stopped.

@@ -408,7 +408,6 @@ struct LastLibrary {
 /// Reads the library in use kept in folder `dir` ahead of the first artwork (while the gallery
 /// shows), so that it opens without reading it (see [`CanvasSession::open_brushes`]); nothing if it
 /// is held already or there is none. Slow with many brushes brought in: call it off the main thread.
-#[uniffi::export]
 pub fn prepare_brushes(dir: String) {
     let (library, first) = crate::brush_libraries::file_in_use(std::path::Path::new(&dir));
     if holds(&LAST_LIBRARY, &library) || !library.is_file() {
@@ -483,23 +482,6 @@ fn remembered(slot: &std::sync::Mutex<Option<LastLibrary>>, path: &std::path::Pa
 }
 pub(crate) const CHOICES_FILE: &str = "choices.json";
 const SEEN_FILE: &str = "seen.txt";
-
-/// Puts what an earlier version kept elsewhere into folder `dir` for [`CanvasSession::open_brushes`]:
-/// the shipped brushes it had seen (`seen`, numbers joined by commas) and the brushes in use
-/// (`choices`, as [`CanvasSession::saved_brush_choices`] gives), each only where the folder has none.
-/// False if one couldn't be written.
-#[uniffi::export]
-pub fn adopt_kept_brushes(dir: String, seen: Option<String>, choices: Option<String>) -> bool {
-    let dir = std::path::PathBuf::from(dir);
-    let _ = std::fs::create_dir_all(&dir);
-    [(SEEN_FILE, seen), (CHOICES_FILE, choices)].into_iter().all(|(name, text)| {
-        let path = dir.join(name);
-        match text {
-            Some(text) if !path.exists() => std::fs::write(&path, text).is_ok(),
-            _ => true,
-        }
-    })
-}
 
 /// One brush as a file to share.
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -935,7 +917,6 @@ impl State {
     }
 }
 
-#[uniffi::export]
 impl CanvasSession {
     /// The Recent set: the pinned brushes (as they were pinned), then those last painted with,
     /// the latest first.
@@ -1438,7 +1419,6 @@ fn keep_library_text(path: &std::path::Path, json: &str, pictures: &[(String, cr
     written.is_ok()
 }
 
-#[uniffi::export]
 impl CanvasSession {
     /// Keeps the library in use, the tools' brushes, the sets' choices and the brushes' sliders in
     /// folder `dir`, in that library's own files, for [`Self::open_brushes`]. False if they couldn't

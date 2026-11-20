@@ -172,7 +172,6 @@ impl State {
     }
 }
 
-#[uniffi::export]
 impl CanvasSession {
     /// Shows `canvas`, a plugin's artwork of kind `kind` (`<id>.<key>`), in this session, its picture
     /// in the current layer: from then on strokes go to it and undo goes through what it saves.
@@ -220,9 +219,9 @@ impl CanvasSession {
     }
 
     /// The plugin's artwork written to `path` as an SVG picture, its shapes kept as they are.
-    pub fn export_svg(&self, path: String) -> Result<(), crate::MobileError> {
+    pub fn export_svg(&self, path: String) -> Result<(), crate::CanvasError> {
         let canvas = self.shared.lock().plugin_artwork.as_ref().map(|a| Arc::clone(&a.canvas));
-        let reason = |why: &str| crate::MobileError::File { reason: why.to_owned() };
+        let reason = |why: &str| crate::CanvasError::File { reason: why.to_owned() };
         let text = canvas.ok_or_else(|| reason("not an artwork a plugin draws"))?.svg();
         let text = text.ok_or_else(|| reason("the plugin couldn't draw it"))?;
         crate::project::write_atomically(std::path::Path::new(&path), |p| {

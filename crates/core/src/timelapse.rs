@@ -31,7 +31,7 @@ const MOST_SEGMENTS: usize = 32;
 
 /// A time-lapse's video: 1080p, 2K or 4K (`resolution` 0 to 2), Low, Good, Studio quality or
 /// Lossless (`quality` 0 to 3), and HEVC or H.264.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Record)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TimeLapseSettings {
     pub resolution: u32,
     pub quality: u32,
@@ -45,13 +45,7 @@ impl Default for TimeLapseSettings {
 }
 
 /// The replay's and the video's frames a second.
-#[uniffi::export]
-pub fn time_lapse_fps() -> u32 {
-    TIME_LAPSE_FPS
-}
-
 /// The longest side of a video made with `s`, pixels: 1920, 2732 or 3840.
-#[uniffi::export]
 pub fn time_lapse_side(s: TimeLapseSettings) -> u32 {
     match s.resolution {
         1 => 2732,
@@ -61,7 +55,6 @@ pub fn time_lapse_side(s: TimeLapseSettings) -> u32 {
 }
 
 /// The bits a pixel a second a video made with `s` takes: 2, 4, 8 or 16.
-#[uniffi::export]
 pub fn time_lapse_bits_per_pixel(s: TimeLapseSettings) -> u32 {
     match s.quality {
         0 => 2,
@@ -73,7 +66,6 @@ pub fn time_lapse_bits_per_pixel(s: TimeLapseSettings) -> u32 {
 
 /// How Canvas information names a time-lapse's settings: its quality, its resolution and its
 /// codec (Good, 1080p, H.264).
-#[uniffi::export]
 pub fn time_lapse_setting_names(s: TimeLapseSettings) -> Vec<String> {
     let quality = ["Low", "Good", "Studio", "Lossless"].get(s.quality as usize).copied().unwrap_or("Good");
     let resolution = ["1080p", "2K", "4K"].get(s.resolution as usize).copied().unwrap_or("1080p");
@@ -83,7 +75,6 @@ pub fn time_lapse_setting_names(s: TimeLapseSettings) -> Vec<String> {
 
 /// The frames a video `seconds` long takes out of `frames`, spread evenly; all of them when it
 /// is none, or they wouldn't fill it.
-#[uniffi::export]
 pub fn time_lapse_picks(frames: u32, seconds: Option<u32>) -> Vec<u32> {
     let wanted = seconds.map(|s| s.saturating_mul(TIME_LAPSE_FPS));
     match wanted {
@@ -96,7 +87,6 @@ pub fn time_lapse_picks(frames: u32, seconds: Option<u32>) -> Vec<u32> {
     }
 }
 
-#[derive(uniffi::Object)]
 pub struct TimeLapse {
     dir: PathBuf,
     state: Mutex<State>,
@@ -137,10 +127,8 @@ struct Taking {
     bitrate: u64,
 }
 
-#[uniffi::export]
 impl TimeLapse {
     /// The time-lapse of the artwork in folder `artwork`, its frames counted.
-    #[uniffi::constructor]
     pub fn new(artwork: String) -> Arc<TimeLapse> {
         let dir = Path::new(&artwork).join("timelapse");
         let lapse = TimeLapse {
@@ -391,7 +379,6 @@ impl TimeLapse {
     }
 }
 
-#[uniffi::export]
 impl TimeLapse {
     /// What to tell, once, when the time-lapse couldn't be written (the disk full, say); none
     /// otherwise, and none again until a write has worked and another failed.
@@ -425,7 +412,7 @@ impl TimeLapse {
 /// into `width` x `height` (0 x 0: into the first frame's size, within the settings' side);
 /// `append` when it adds to the videos made before (it must then come out that size, and as HEVC
 /// or H.264 as `hevc` says, as they are).
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SegmentPlan {
     pub path: String,
     pub frames: Vec<u32>,
@@ -436,7 +423,7 @@ pub struct SegmentPlan {
 }
 
 /// One of a time-lapse's videos: its file, the frame it starts at, and how many it holds.
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TimeLapseClip {
     pub path: String,
     pub first: u32,
@@ -483,7 +470,6 @@ pub(crate) struct Mp4 {
 /// What a video is named after, with no note saying what it holds, so kept rather than lost.
 const SET_ASIDE: &str = "set-aside-";
 
-#[uniffi::export]
 impl TimeLapse {
     /// The video a package still needs made so every frame is in one (the ones made before kept,
     /// so a share makes only what is new); none when they all are. The ones made before go when

@@ -32,7 +32,7 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       # `--all` also formats the vendored clip-core path dependency, which must stay byte-identical to upstream.
-      - run: cargo fmt --check -p sumi-engine -p sumi-gpu -p sumi-core -p sumi-clip -p sumi-bindgen -p sumi-desktop
+      - run: cargo fmt --check -p sumi-engine -p sumi-gpu -p sumi-core -p sumi-clip -p sumi-desktop
       - run: cargo clippy --workspace --all-targets -- -D warnings
       # the code only macOS builds (the Mac's pen, Finder, video, PDF and fonts), checked without
       # linking: no Mac needed

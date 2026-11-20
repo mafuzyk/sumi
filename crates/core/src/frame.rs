@@ -1,5 +1,5 @@
-//! Drawing a frame into a window's image: by the render thread on Android and iPadOS, and by the
-//! desktop app's own loop; and setting up the window's surface for it.
+//! Drawing the canvas into the desktop application's window surface; the host owns the window
+//! and schedules its render loop.
 
 use std::time::{Duration, Instant};
 

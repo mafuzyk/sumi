@@ -271,10 +271,10 @@ impl Weight {
 
 /// Inter's faces (bundled with the Android app, OFL).
 pub static INTER_FACES: [(Weight, &[u8]); 4] = [
-    (Weight::Regular, include_bytes!("../../android/app/src/main/assets/fonts/Inter-Regular.ttf")),
-    (Weight::Medium, include_bytes!("../../android/app/src/main/assets/fonts/Inter-Medium.ttf")),
-    (Weight::SemiBold, include_bytes!("../../android/app/src/main/assets/fonts/Inter-SemiBold.ttf")),
-    (Weight::Bold, include_bytes!("../../android/app/src/main/assets/fonts/Inter-Bold.ttf")),
+    (Weight::Regular, include_bytes!("../../assets/shared/fonts/Inter-Regular.ttf")),
+    (Weight::Medium, include_bytes!("../../assets/shared/fonts/Inter-Medium.ttf")),
+    (Weight::SemiBold, include_bytes!("../../assets/shared/fonts/Inter-SemiBold.ttf")),
+    (Weight::Bold, include_bytes!("../../assets/shared/fonts/Inter-Bold.ttf")),
 ];
 
 /// Inter (bundled with the Android app, OFL) for all text, egui's own fonts behind it for what it

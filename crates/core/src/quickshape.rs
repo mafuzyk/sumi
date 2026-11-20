@@ -14,7 +14,7 @@ use sumi_gpu::{Canvas, StrokeStyle};
 
 use crate::{CanvasSession, PointerKind, State};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum QuickShapeKind {
     Line,
     Polyline,
@@ -67,7 +67,7 @@ impl From<QuickShapeKind> for ShapeKind {
 
 /// How a curve's anchor sits: its controls mirrored either side of it, free of each other, or
 /// turned along their own spans as a corner.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum QuickShapeAnchor {
     Smooth,
     Broken,
@@ -76,7 +76,7 @@ pub enum QuickShapeAnchor {
 
 /// The shape a stroke snapped to: its kind, the kinds it can be shown as instead (its own first),
 /// its editing handles (window points, x and y in turn), and how each of a curve's anchors sits.
-#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct QuickShapeInfo {
     pub kind: QuickShapeKind,
     pub choices: Vec<QuickShapeKind>,
@@ -628,14 +628,12 @@ fn resample(outline: &[Vec2], along: &StrokeAlong) -> Vec<Sample> {
 
 /// The outline (x and y in turn) of the shape a path of points (x and y in turn) looks like, if
 /// any: a freehand selection held still snaps to it.
-#[uniffi::export]
 pub fn quickshape_outline(points: Vec<f32>) -> Option<Vec<f32>> {
     let path: Vec<Vec2> = points.as_chunks::<2>().0.iter().map(|&[x, y]| Vec2::new(x, y)).collect();
     let shape = recognise(&path).into_iter().next()?;
     Some(shape.outline().into_iter().flat_map(|p| [p.x, p.y]).collect())
 }
 
-#[uniffi::export]
 impl CanvasSession {
     /// The stroke being drawn has been held still: it snaps to the shape it looks like, if any.
     pub fn quickshape_hold(&self) -> Option<QuickShapeInfo> {

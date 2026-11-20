@@ -8,7 +8,7 @@ use sumi_engine::geom::{Affine, IRect, Vec2};
 
 use crate::{CanvasSession, State};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TextAlignment {
     Left,
     Center,
@@ -17,7 +17,7 @@ pub enum TextAlignment {
 }
 
 /// A text layer's text and how it looks.
-#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct TextInfo {
     pub text: String,
     /// The typeface's family and style names.
@@ -112,7 +112,7 @@ impl From<TextInfo> for LayerText {
 const TEXT_STEPS_KEPT: usize = 256;
 
 /// A side of the text box, whose dot is dragged to change its width.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TextSide {
     Left,
     Right,
@@ -192,7 +192,6 @@ const NEW_TEXT_POINTS: f32 = 64.0;
 const NEW_TEXT_BOX_POINTS: f32 = 488.448;
 const NEW_TEXT_DOWN: f32 = 0.25;
 
-#[uniffi::export]
 impl CanvasSession {
     /// `base` (its words and look) placed as new text in a window `width` × `height` pixels,
     /// `density` pixels a point: its letters and box sized so they look the same at any zoom,
@@ -225,7 +224,6 @@ impl CanvasSession {
     }
 }
 
-#[uniffi::export]
 impl CanvasSession {
     /// Starts editing text: a new text layer above the current one with `info` (`id` none), or
     /// text layer `id`. Returns the layer being edited, or none if `id` isn't a text layer.
@@ -575,7 +573,7 @@ mod tests {
 
     #[test]
     fn a_side_dragged_sets_the_width_each_drag_a_step_inside_the_edit() {
-        crate::add_text_font(include_bytes!("../../../android/app/src/main/assets/fonts/Inter-Regular.ttf").to_vec());
+        crate::add_text_font(include_bytes!("../../../assets/shared/fonts/Inter-Regular.ttf").to_vec());
         // shown twice as large and turned half round: canvas (x, y) at window (600 - 2x, 400 - 2y)
         let view = Affine { a: -2.0, b: 0.0, c: 0.0, d: -2.0, e: 600.0, f: 400.0 };
         let Some(s) = session(view) else { return };
@@ -656,7 +654,7 @@ mod tests {
 
     #[test]
     fn a_box_as_wide_as_its_text_takes_the_width_it_is_dragged_to() {
-        crate::add_text_font(include_bytes!("../../../android/app/src/main/assets/fonts/Inter-Regular.ttf").to_vec());
+        crate::add_text_font(include_bytes!("../../../assets/shared/fonts/Inter-Regular.ttf").to_vec());
         let Some(s) = session(Affine::IDENTITY) else { return };
         let natural = TextInfo { width: 0.0, ..text("Hello") };
         let laid = crate::text_box(natural.clone())[2];

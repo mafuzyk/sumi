@@ -41,7 +41,6 @@ impl State {
     }
 }
 
-#[uniffi::export]
 impl CanvasSession {
     /// Crops and resizes the canvas, as one undo step: keeps the rectangle `x, y, width, height`
     /// (canvas pixels; it may reach past the edges) turned by `angle` radians about its middle.
@@ -153,7 +152,6 @@ impl CanvasSession {
     }
 }
 
-#[uniffi::export]
 impl CanvasSession {
     /// What the GPU couldn't do for the canvas, worded for the app to tell, once each: a crop or a
     /// smudge there was no memory for (the canvas is as it was), or its device lost (what it held

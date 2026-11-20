@@ -71,7 +71,6 @@ fn families_of(db: &fontdb::Database, ids: &[fontdb::ID]) -> Vec<String> {
 
 /// Adds the fonts in `bytes` (a .ttf, .otf or a collection) to those text is drawn with; the
 /// families they are.
-#[uniffi::export]
 pub fn add_text_font(bytes: Vec<u8>) -> Vec<String> {
     let mut f = fonts();
     let db = f.system.db_mut();
@@ -80,7 +79,6 @@ pub fn add_text_font(bytes: Vec<u8>) -> Vec<String> {
 }
 
 /// Adds the fonts in the file at `path`; the families they are (none if it can't be read).
-#[uniffi::export]
 pub fn add_text_font_file(path: String) -> Vec<String> {
     let mut f = fonts();
     add_file(&mut f, &path)
@@ -169,7 +167,6 @@ fn offer_file(path: &std::path::Path) -> Option<TextTypeface> {
 
 /// Where the user's imported fonts are kept (a folder of the app's), the fonts already there read
 /// in and offered (once a folder).
-#[uniffi::export]
 pub fn set_text_font_folder(dir: String) {
     let dir = std::path::PathBuf::from(dir);
     if imported().0.replace(dir.clone()).as_ref() == Some(&dir) {
@@ -186,7 +183,6 @@ pub fn set_text_font_folder(dir: String) {
 
 /// A font file the user chose (`bytes`, called `file_name`) kept in the fonts folder and offered:
 /// the typeface text can take. None if it isn't a font (nothing is kept) or there is no folder.
-#[uniffi::export]
 pub fn import_text_font(bytes: Vec<u8>, file_name: String) -> Option<TextTypeface> {
     let dir = imported().0.clone()?;
     let safe: String = file_name.chars().filter(|c| c.is_alphanumeric() || " ._-".contains(*c)).collect();
@@ -217,20 +213,7 @@ pub fn import_text_font(bytes: Vec<u8>, file_name: String) -> Option<TextTypefac
     offered
 }
 
-/// The generic families text layers name (Android's), each drawn in the first of these the
-/// system has: on Android its own, as its font list gives them.
-const ANDROID_GENERIC: [(&str, &[&str]); 8] = [
-    ("sans-serif", &["Roboto"]),
-    ("sans-serif-condensed", &["Roboto Condensed", "Roboto"]),
-    ("serif", &["Noto Serif"]),
-    ("monospace", &["Droid Sans Mono"]),
-    ("serif-monospace", &["Cutive Mono"]),
-    ("casual", &["Coming Soon"]),
-    ("cursive", &["Dancing Script"]),
-    ("sans-serif-smallcaps", &["Carrois Gothic SC", "Roboto"]),
-];
-
-/// The same on a computer: Windows', macOS's and Linux's nearest.
+/// The generic families text layers name on Windows, macOS and Linux.
 const COMPUTER_GENERIC: [(&str, &[&str]); 8] = [
     ("sans-serif", &["Segoe UI", "Helvetica Neue", "DejaVu Sans", "Liberation Sans", "Noto Sans", "Arial"]),
     ("sans-serif-condensed", &["Arial Narrow", "Helvetica Neue", "DejaVu Sans Condensed", "Liberation Sans Narrow"]),
@@ -244,21 +227,13 @@ const COMPUTER_GENERIC: [(&str, &[&str]); 8] = [
 
 /// Adds the system's own fonts, the generic families text layers name pointed at those of them
 /// it has.
-#[uniffi::export]
 pub fn add_system_text_fonts() {
     let mut fonts = fonts();
     let db = fonts.system.db_mut();
     db.load_system_fonts();
-    // the font library looks nowhere on Android: its fonts are in these folders
-    if cfg!(target_os = "android") {
-        for dir in ["/system/fonts", "/product/fonts", "/system_ext/fonts"] {
-            db.load_fonts_dir(dir);
-        }
-    }
     let have: std::collections::HashSet<String> =
         db.faces().filter_map(|f| f.families.first().map(|(name, _)| name.clone())).collect();
-    let generic = if cfg!(target_os = "android") { ANDROID_GENERIC } else { COMPUTER_GENERIC };
-    for (name, choices) in generic {
+    for (name, choices) in COMPUTER_GENERIC {
         if let Some(found) = choices.iter().find(|c| have.contains(**c)) {
             fonts.aliases.insert(name.to_owned(), (*found).to_owned());
         }
@@ -267,13 +242,11 @@ pub fn add_system_text_fonts() {
 
 /// Text layers naming `name` (a platform's generic family, such as "serif") are drawn in
 /// `family`.
-#[uniffi::export]
 pub fn set_text_family_alias(name: String, family: String) {
     fonts().aliases.insert(name, family);
 }
 
 /// Every family text can be drawn in, sorted, each once.
-#[uniffi::export]
 pub fn text_families() -> Vec<String> {
     let f = fonts();
     let mut names: Vec<String> =
@@ -307,7 +280,7 @@ fn family_name(f: &mut Fonts, font: &str) -> String {
 }
 
 /// A typeface the text tool offers: the name shown, and the family text layers name.
-#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct TextTypeface {
     pub name: String,
     pub family: String,
@@ -315,7 +288,6 @@ pub struct TextTypeface {
 
 /// The typefaces every platform offers (each draws the generic ones in its own fonts), then the
 /// bundled Inter, then the user's imported fonts by name.
-#[uniffi::export]
 pub fn text_typefaces() -> Vec<TextTypeface> {
     let imported = imported().1.clone();
     [
@@ -336,7 +308,6 @@ pub fn text_typefaces() -> Vec<TextTypeface> {
 }
 
 /// The styles each typeface offers, by name, lightest first, each upright then slanting.
-#[uniffi::export]
 pub fn text_styles() -> Vec<String> {
     ["Thin", "Light", "Regular", "Medium", "Bold", "Black"]
         .into_iter()
@@ -497,7 +468,6 @@ fn font_metrics(f: &mut Fonts, family: &str, weight: u16, italic: bool, size: f3
 }
 
 /// The text's box on the canvas: its left, top, width and height (pixels).
-#[uniffi::export]
 pub fn text_box(info: TextInfo) -> Vec<f32> {
     let laid = lay_out(&mut fonts(), &info);
     vec![info.x, info.y - info.baseline * info.size, laid.width, laid.height]
@@ -607,7 +577,6 @@ pub(crate) fn draw_text_within(info: &TextInfo, region: sumi_engine::geom::IRect
 
 /// The text drawn over transparency on a picture `width` × `height`, as the canvas is:
 /// premultiplied RGBA8.
-#[uniffi::export]
 pub fn draw_text(info: TextInfo, width: u32, height: u32) -> Vec<u8> {
     let mut out = Picture::new(width, height);
     let mut guard = fonts();
@@ -662,7 +631,6 @@ fn letters(
 /// A place in `text` counted in UTF-16 units (as Android's and Java's strings count, an emoji two)
 /// as the characters the core's text calls take (`text_caret`, `draw_chosen_text`); a place
 /// inside a pair counts as after it.
-#[uniffi::export]
 pub fn text_index_from_utf16(text: String, utf16: u32) -> u32 {
     let mut units = 0u32;
     let mut chars = 0u32;
@@ -677,7 +645,6 @@ pub fn text_index_from_utf16(text: String, utf16: u32) -> u32 {
 }
 
 /// A character place in `text` (as the core counts) in UTF-16 units, as Android's strings count.
-#[uniffi::export]
 pub fn text_index_to_utf16(text: String, index: u32) -> u32 {
     text.chars().take(index as usize).map(|c| c.len_utf16() as u32).sum()
 }
@@ -724,7 +691,6 @@ fn caret_in(laid: &Laid, paragraph: usize, offset: usize) -> Option<(usize, f32)
 
 /// Where the caret stands before character `index` of the text: its x and its line's top and
 /// bottom on the canvas (pixels). None for vertical text, whose letters are spread apart.
-#[uniffi::export]
 pub fn text_caret(info: TextInfo, index: u32) -> Vec<f32> {
     if info.vertical {
         return Vec::new();
@@ -741,7 +707,7 @@ const CHOSEN_RING: f32 = 0.08;
 
 /// A picture of part of the canvas: its top left corner and size (pixels) and its premultiplied
 /// RGBA8.
-#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct TextPicture {
     pub x: i32,
     pub y: i32,
@@ -753,7 +719,6 @@ pub struct TextPicture {
 /// The letters from character `start` to `end` of the text, chosen: ringed in `ring` (ARGB) with
 /// the letters over it in their own colour, cut to their lines' height; none if no letters are.
 /// Vertical text shows none.
-#[uniffi::export]
 pub fn draw_chosen_text(info: TextInfo, start: u32, end: u32, ring: u32) -> Option<TextPicture> {
     let (start, end) = (start.min(end) as usize, start.max(end) as usize);
     if info.vertical || start == end {
@@ -879,7 +844,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("sumi-fonts-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         super::set_text_font_folder(dir.to_string_lossy().into_owned());
-        let inter = include_bytes!("../../../android/app/src/main/assets/fonts/Inter-Regular.ttf").to_vec();
+        let inter = include_bytes!("../../../assets/shared/fonts/Inter-Regular.ttf").to_vec();
         // the same font under a family of another name, wherever the file writes it
         let (from, to): (Vec<u8>, Vec<u8>) = (
             "Inter".encode_utf16().flat_map(u16::to_be_bytes).collect(),
@@ -909,7 +874,7 @@ mod tests {
     }
 
     fn inter() {
-        crate::add_text_font(include_bytes!("../../../android/app/src/main/assets/fonts/Inter-Regular.ttf").to_vec());
+        crate::add_text_font(include_bytes!("../../../assets/shared/fonts/Inter-Regular.ttf").to_vec());
     }
 
     fn text(words: &str, width: f32) -> TextInfo {

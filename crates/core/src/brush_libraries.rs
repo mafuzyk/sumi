@@ -30,7 +30,7 @@ const FIRST: &str = "main";
 const KEEP_TRIES: usize = 3;
 
 /// A brush library as its card shows it: its name, whether it is the one in use, and its sets.
-#[derive(uniffi::Record, Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct BrushLibraryInfo {
     pub name: String,
     pub current: bool,
@@ -280,7 +280,6 @@ fn write(path: &Path, text: &str) -> bool {
     written.is_ok()
 }
 
-#[uniffi::export]
 impl CanvasSession {
     /// Every brush library in order, the one in use among them.
     pub fn brush_libraries(&self) -> Vec<BrushLibraryInfo> {

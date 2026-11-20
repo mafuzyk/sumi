@@ -28,7 +28,7 @@ const TOO_BIG: &str = "This filter takes too long on a canvas this big.";
 const NO_DEVICE: &str = "The canvas isn't ready for a filter yet.";
 
 /// What a filter's panel shows.
-#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PluginFilterShown {
     pub name: String,
     pub controls: Vec<PluginControl>,
@@ -153,7 +153,6 @@ impl CanvasSession {
     }
 }
 
-#[uniffi::export]
 impl CanvasSession {
     /// Opens the filter `id` from `plugins` on the current layer, keeping any adjustment open first.
     /// What to tell if it can't be; nothing if it opened, or if the layer can't be adjusted, as with

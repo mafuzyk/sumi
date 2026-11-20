@@ -704,7 +704,6 @@ impl Hooks {
     }
 }
 
-#[uniffi::export]
 impl CanvasSession {
     /// Strokes go through the plugins on in `plugins`, as they come and go, from here on.
     pub fn use_plugins(&self, plugins: Arc<Plugins>) {

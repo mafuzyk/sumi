@@ -1,13 +1,14 @@
 # Sumi
 
-Sumi is a painting app for Windows and Linux. The engine and the wgpu renderer are written in
+Sumi is a painting app for Linux, Windows and macOS. The engine and the wgpu renderer are written in
 Rust, and the interface is drawn with egui.
 
-0.1.0 is the first release. Android and iOS are not part of it.
+0.1.0 is the first desktop release, for Linux, Windows and macOS.
 
 ![Dusk, painted in Sumi: a sunset sky from indigo to gold, a pale sun with a soft glow, birds, dark hills and pines, with the tool bar along the top and the size and opacity controls on the left](docs/images/canvas.jpg)
 
-*Dusk*, painted from a blank canvas in Sumi. The session is recorded in
+*Dusk*, painted from a blank canvas in an earlier tablet build of Sumi. This is a historical
+interface capture; the current release is desktop-only. The session is recorded in
 [demo.webp](docs/images/demo.webp).
 
 ## Features

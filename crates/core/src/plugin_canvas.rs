@@ -290,12 +290,11 @@ pub(crate) fn svg(paths: &[DrawPath], width: u32, height: u32) -> String {
 }
 
 /// A plugin's kind of artwork, as the gallery lists it, or of layer: `key` is `<id>.<key>`.
-#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PluginKind {
     pub key: String,
     pub label: String,
     /// What a kind of layer's layers are known by on their thumbnails, if its manifest draws it.
-    #[uniffi(default = None)]
     pub badge: Option<PluginBadge>,
     /// What a kind of layer's layers can be exported as, by its plugin.
     pub exports: Vec<PluginExport>,
@@ -304,7 +303,7 @@ pub struct PluginKind {
 /// A file a plugin makes of an artwork's layers of a kind it adds (an SVG picture of vector
 /// layers, say), offered under Share beside the app's own: `key` is `<id>.<kind>.<key>`, `label`
 /// what Share calls it, and the file's extension and media type.
-#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PluginExport {
     pub key: String,
     pub label: String,
@@ -314,7 +313,7 @@ pub struct PluginExport {
 
 /// A small drawing a kind of layer is known by on its layers' thumbnails: lines and dots in a box
 /// 1 across and 1 down (x to the right, y down), drawn light over a dark badge.
-#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PluginBadge {
     pub lines: Vec<BadgeLine>,
     /// Small squares at these points: x, y, x, y and so on.
@@ -323,7 +322,7 @@ pub struct PluginBadge {
 
 /// One of a badge's lines: its points (x, y, x, y and so on), straight from each to the next, or
 /// `curved`: cubic curves, a start, then two handles and an end for each.
-#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct BadgeLine {
     pub points: Vec<f32>,
     pub curved: bool,
@@ -345,7 +344,7 @@ impl PluginBadge {
 }
 
 /// A plugin's artwork open: the copy of its code that keeps it, and its size.
-#[derive(uniffi::Object)]
+
 pub struct PluginCanvas {
     pub(crate) id: String,
     width: u32,
@@ -510,7 +509,6 @@ impl PluginCanvas {
     }
 }
 
-#[uniffi::export]
 impl PluginCanvas {
     pub fn width(&self) -> u32 {
         self.width
@@ -552,7 +550,6 @@ impl PluginCanvas {
     }
 }
 
-#[uniffi::export]
 impl PluginCanvas {
     /// A touch (`phase` 0 down, 1 moved, 2 up, 3 called off) at (`x`, `y`), canvas pixels: whether
     /// what it draws changed. False once it stopped.

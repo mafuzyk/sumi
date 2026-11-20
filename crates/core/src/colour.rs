@@ -82,7 +82,6 @@ fn pack(v: &[f64]) -> u32 {
 }
 
 /// Tells where imported profiles are kept, and reads those already there.
-#[uniffi::export]
 pub fn set_profile_folder(dir: String) {
     let folder = PathBuf::from(dir);
     let mut profiles = Vec::new();
@@ -108,7 +107,6 @@ pub fn set_profile_folder(dir: String) {
 /// Adds the profile in `bytes` (an .icc file) to those a canvas can be in, keeping a copy; its
 /// name, or none if it isn't an RGB or CMYK profile colours can be turned into. A profile with the
 /// name of one there already takes its place.
-#[uniffi::export]
 pub fn import_profile(bytes: Vec<u8>) -> Option<String> {
     let p = IccProfile::parse(&bytes).filter(|p| p.can_receive() && p.space != Space::Gray && !p.name.is_empty())?;
     if Profile::from_name(&p.name).is_some() || generic_cmyk().is_some_and(|g| g.name == p.name) {
@@ -134,7 +132,6 @@ pub fn import_profile(bytes: Vec<u8>) -> Option<String> {
 }
 
 /// The CMYK profiles a canvas can print to, by name, in the order lists show them.
-#[uniffi::export]
 pub fn cmyk_profiles() -> Vec<String> {
     let ours = generic_cmyk().map(|p| p.name.clone());
     ours.into_iter().chain(imported().iter().filter(|p| p.space == Space::Cmyk).map(|p| p.name.clone())).collect()
@@ -142,7 +139,6 @@ pub fn cmyk_profiles() -> Vec<String> {
 
 /// The RGB profiles a canvas can be in, by name, in the order lists show them: the built-in ones,
 /// then those imported.
-#[uniffi::export]
 pub fn color_profiles() -> Vec<String> {
     Profile::ALL
         .iter()
@@ -151,29 +147,20 @@ pub fn color_profiles() -> Vec<String> {
         .collect()
 }
 
-/// Whether `name` is one of the built-in RGB profiles (whose colours the screen shows by matrix).
-#[uniffi::export]
-pub fn profile_is_built_in(name: String) -> bool {
-    Profile::from_name(&name).is_some()
-}
-
 /// Whether a canvas in the profile named `profile` takes the colour panel's Display P3 colours
 /// (Harmony's wheel) as they are: a P3 canvas, a CMYK one (shown in P3) and one in an imported
 /// profile. A built-in sRGB one has them turned into sRGB.
-#[uniffi::export]
 pub fn colours_in_p3(profile: String) -> bool {
     Profile::from_name(&profile).is_none_or(|p| p == Profile::DisplayP3)
 }
 
 /// Whether the profile named `name` is a CMYK one.
-#[uniffi::export]
 pub fn is_cmyk_profile(name: String) -> bool {
     resolve(&name).is_some_and(|(_, icc)| icc.is_some_and(|i| i.0.space == Space::Cmyk))
 }
 
 /// An 8-bit colour (0xRRGGBB) in the RGB profile named `from` (a CMYK profile's: Display P3), as it
 /// is in `to`; unchanged if either name isn't a profile.
-#[uniffi::export]
 pub fn convert_color(rgb: u32, from: String, to: String) -> u32 {
     match (Profile::from_name(&from), Profile::from_name(&to)) {
         (Some(from), Some(to)) => from.convert_rgb(rgb & 0xFF_FFFF, to),
@@ -184,7 +171,6 @@ pub fn convert_color(rgb: u32, from: String, to: String) -> u32 {
     }
 }
 
-#[uniffi::export]
 impl CanvasSession {
     /// Whether the canvas prints to a CMYK profile.
     pub fn is_cmyk(&self) -> bool {

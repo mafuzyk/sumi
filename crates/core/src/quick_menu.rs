@@ -3,7 +3,7 @@
 //! an action does stays with each app, as it opens their panels and tools.
 
 /// What a QuickMenu button can be set to. The adjustments are listed under Adjustments.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum QuickAction {
     None,
     Guide2d,
@@ -169,19 +169,16 @@ fn entry(action: QuickAction) -> (QuickAction, &'static str, &'static str, bool)
 }
 
 /// What an action's row and button say.
-#[uniffi::export]
 pub fn quick_action_label(action: QuickAction) -> String {
     entry(action).2.to_owned()
 }
 
 /// Whether the action is one of the adjustments (listed under Adjustments).
-#[uniffi::export]
 pub fn quick_action_adjusts(action: QuickAction) -> bool {
     entry(action).3
 }
 
 /// The picker's rows: the actions by name (as written, capitals first), `None` for Adjustments.
-#[uniffi::export]
 pub fn quick_actions_listed() -> Vec<Option<QuickAction>> {
     let mut rows: Vec<(&str, Option<QuickAction>)> =
         ACTIONS.iter().filter(|e| !e.3).map(|e| (e.2, Some(e.0))).collect();
@@ -191,7 +188,6 @@ pub fn quick_actions_listed() -> Vec<Option<QuickAction>> {
 }
 
 /// The rows under Adjustments, by name.
-#[uniffi::export]
 pub fn quick_adjustments_listed() -> Vec<QuickAction> {
     let mut rows: Vec<(&str, QuickAction)> = ACTIONS.iter().filter(|e| e.3).map(|e| (e.2, e.0)).collect();
     rows.sort_by(|a, b| a.0.cmp(b.0));
@@ -200,7 +196,6 @@ pub fn quick_adjustments_listed() -> Vec<QuickAction> {
 
 /// The QuickMenu's buttons as kept in `saved` (see [`quick_menu_saved`]), or as a menu starts when
 /// nothing is kept or it is not six. A name not known any more is No Action.
-#[uniffi::export]
 pub fn quick_menu_slots(saved: Option<String>) -> Vec<QuickAction> {
     let slots: Option<Vec<QuickAction>> = saved
         .map(|s| s.split(',').map(|n| ACTIONS.iter().find(|e| e.1 == n).map_or(QuickAction::None, |e| e.0)).collect());
@@ -208,7 +203,6 @@ pub fn quick_menu_slots(saved: Option<String>) -> Vec<QuickAction> {
 }
 
 /// The QuickMenu's buttons as kept: their names, joined with commas.
-#[uniffi::export]
 pub fn quick_menu_saved(slots: Vec<QuickAction>) -> String {
     slots.iter().map(|&a| entry(a).1).collect::<Vec<_>>().join(",")
 }
@@ -216,7 +210,7 @@ pub fn quick_menu_saved(slots: Vec<QuickAction>) -> String {
 /// One of the QuickMenu's menus: its name (shown in the middle) and its six buttons, each with
 /// the key of the brush it is set to (see `CanvasSession::quick_brush`) when it is Select brush,
 /// else 0 (a Select brush button with none opens the brush library).
-#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct QuickMenuSet {
     pub name: String,
     pub slots: Vec<QuickAction>,
@@ -246,7 +240,6 @@ fn menu_name(n: usize) -> String {
 /// The QuickMenu's menus as kept in `saved` (see [`quick_menus_saved`]), oldest first. With none
 /// kept there is one, "QuickMenu 1", with the buttons kept before there were several (`single`,
 /// see [`quick_menu_slots`]).
-#[uniffi::export]
 pub fn quick_menus(saved: Option<String>, single: Option<String>) -> Vec<QuickMenuSet> {
     let menus: Vec<QuickMenuSet> = saved
         .unwrap_or_default()
@@ -266,7 +259,6 @@ pub fn quick_menus(saved: Option<String>, single: Option<String>) -> Vec<QuickMe
 
 /// The menus as kept: a line each, the name and the buttons (see [`quick_menu_saved`]) split by a
 /// tab.
-#[uniffi::export]
 pub fn quick_menus_saved(menus: Vec<QuickMenuSet>) -> String {
     let slot = |(i, &a): (usize, &QuickAction), brushes: &[u64]| match brushes.get(i).copied().unwrap_or(0) {
         key if a == QuickAction::Brushes && key != 0 => format!("{BRUSH_KEPT}{key}"),
@@ -284,7 +276,6 @@ pub fn quick_menus_saved(menus: Vec<QuickMenuSet>) -> String {
 
 /// The menus with a new one after them: "QuickMenu N", N one more than there are (or the next
 /// not taken), its six buttons No Action.
-#[uniffi::export]
 pub fn quick_menu_added(menus: Vec<QuickMenuSet>) -> Vec<QuickMenuSet> {
     let mut n = menus.len() + 1;
     while menus.iter().any(|m| m.name == menu_name(n)) {
@@ -301,7 +292,6 @@ pub fn quick_menu_added(menus: Vec<QuickMenuSet>) -> Vec<QuickMenuSet> {
 
 /// Which menu is active once menu `removed` has gone, `active` having been: the same one, or the
 /// one before the active one when that went (the first when the first went).
-#[uniffi::export]
 pub fn quick_menu_active_after(active: u32, removed: u32) -> u32 {
     if removed < active || (removed == active && active > 0) { active - 1 } else { active }
 }

@@ -140,7 +140,7 @@ fn dx12_compiler() -> wgpu::Dx12Compiler {
 }
 
 impl Gpu {
-    /// A wgpu instance for this platform: Vulkan on Android, the native API elsewhere.
+    /// A wgpu instance using the native desktop graphics backend.
     pub fn instance() -> wgpu::Instance {
         Gpu::instance_after(0).unwrap_or_else(|| {
             wgpu::Instance::new(with_compiler(wgpu::InstanceDescriptor::new_without_display_handle()))
@@ -148,8 +148,7 @@ impl Gpu {
     }
 
     /// The backends a device is made from, best first: those `WGPU_BACKEND` names if it is set
-    /// (to try another when a driver fails); on Android Vulkan, then OpenGL ES (for a device
-    /// whose Vulkan is missing or fails); on Windows Vulkan and Direct3D 12, Direct3D 12 first on
+    /// (to try another when a driver fails); on Windows Vulkan and Direct3D 12, Direct3D 12 first on
     /// ARM (the Snapdragon X's Vulkan driver fails as a canvas opens), then OpenGL (a GPU or
     /// driver too old for either); on Linux Vulkan, then OpenGL (the same); elsewhere the native
     /// API. A backend's index here is the one the other calls take.
@@ -157,9 +156,7 @@ impl Gpu {
         if let Some(chosen) = wgpu::Backends::from_env().filter(|b| !b.is_empty()) {
             return vec![chosen];
         }
-        if cfg!(target_os = "android") {
-            vec![wgpu::Backends::VULKAN, wgpu::Backends::GL]
-        } else if cfg!(all(windows, target_arch = "aarch64")) {
+        if cfg!(all(windows, target_arch = "aarch64")) {
             vec![wgpu::Backends::DX12, wgpu::Backends::VULKAN, wgpu::Backends::GL]
         } else if cfg!(windows) {
             vec![wgpu::Backends::VULKAN, wgpu::Backends::DX12, wgpu::Backends::GL]
@@ -507,7 +504,7 @@ mod tests {
     /// A GPU or driver too old for the rest still draws: without OpenGL behind them the app can't
     /// open at all.
     #[test]
-    #[cfg(any(target_os = "linux", windows, target_os = "android"))]
+    #[cfg(any(target_os = "linux", windows))]
     fn opengl_is_the_last_backend_tried() {
         if std::env::var_os("WGPU_BACKEND").is_none() {
             assert_eq!(super::Gpu::backends().last(), Some(&wgpu::Backends::GL));

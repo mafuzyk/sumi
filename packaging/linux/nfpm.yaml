@@ -16,8 +16,8 @@ homepage: https://github.com/mafuzyk/sumi
 license: GPL-3.0-or-later
 description: |-
   Paint, draw and sketch
-  Sumi is a painting app with brushes, layers, adjustments, text and animation: the same
-  engine and interface as on Android tablets.
+  Sumi is a native desktop painting studio with brushes, layers, adjustments, text,
+  animation and time-lapse recording.
 
 # The binary links only glibc and libgcc_s itself. The windowing (X11 or Wayland, xkbcommon) and
 # the GPU (Vulkan) are loaded while it runs, so the package tools can't find them: listed here.

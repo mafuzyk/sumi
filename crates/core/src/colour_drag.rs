@@ -15,7 +15,7 @@ const PEN_REST: f32 = 3.0;
 const FINGER_REST: f32 = 0.5;
 
 /// Where a dragged colour is after a move, and what the move did.
-#[derive(Clone, Copy, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DragStep {
     /// Where the colour's dot is (points): the pointer, or where it came to rest.
     pub dot_x: f32,
@@ -42,15 +42,13 @@ struct Drag {
 
 /// A colour being dragged out: made as the drag starts, told each move, asked when it comes to
 /// rest.
-#[derive(uniffi::Object)]
+
 pub struct ColourDrag {
     drag: Mutex<Drag>,
 }
 
-#[uniffi::export]
 impl ColourDrag {
     /// Dragging starts at (`x`, `y`) (points) at `ms`, by a pen or not, with the kept `threshold`.
-    #[uniffi::constructor]
     pub fn new(x: f32, y: f32, ms: f64, pen: bool, threshold: f32) -> Arc<ColourDrag> {
         Arc::new(ColourDrag {
             drag: Mutex::new(Drag {

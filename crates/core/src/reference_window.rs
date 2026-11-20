@@ -13,7 +13,7 @@ use crate::{CanvasSession, ReferenceView};
 pub(crate) const REFERENCE_PICTURE: &str = "reference.png";
 
 /// What the window shows. `Model`, the model itself, only on a model.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReferenceShows {
     Canvas,
     Image,
@@ -23,7 +23,7 @@ pub enum ReferenceShows {
 
 /// The window as an app shows it, in points. Until it has been `sized` or `placed` the app chooses
 /// (the numbers then mean nothing).
-#[derive(Clone, Copy, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ReferenceWindowState {
     pub shown: bool,
     pub shows: ReferenceShows,
@@ -38,7 +38,7 @@ pub struct ReferenceWindowState {
 }
 
 /// A place for the window, in points.
-#[derive(Clone, Copy, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ReferencePlace {
     pub x: f32,
     pub y: f32,
@@ -119,7 +119,7 @@ pub(crate) fn upright(png: Vec<u8>, orientation: i64) -> Vec<u8> {
 }
 
 /// A window's size, in points: its width, and its picture's height between the bars.
-#[derive(Clone, Copy, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ReferenceSize {
     pub width: f32,
     pub height: f32,
@@ -128,7 +128,6 @@ pub struct ReferenceSize {
 /// The size a window `width` wide, its picture `height` tall between the bars, shows at on a
 /// screen `screen_width` x `screen_height` (points; not a number: no screen yet): 282 to 650 wide
 /// and 230 to 650 tall with its bars, and no bigger than the screen while that leaves it that.
-#[uniffi::export]
 pub fn reference_window_size(width: f32, height: f32, screen_width: f32, screen_height: f32) -> ReferenceSize {
     let [width, height] = sumi_engine::reference_window::fitted_size([width, height], [screen_width, screen_height]);
     ReferenceSize { width, height }
@@ -137,7 +136,6 @@ pub fn reference_window_size(width: f32, height: f32, screen_width: f32, screen_
 /// Where a window `width` x `tall` at (`x`, `y`) goes in a screen `screen_width` x `screen_height`,
 /// so that it can be reached: all of it shown (the top left of it, if it is bigger). An artwork
 /// may have left it on a screen of another shape.
-#[uniffi::export]
 pub fn reference_window_fitted(
     x: f32,
     y: f32,
@@ -153,7 +151,6 @@ pub fn reference_window_fitted(
     ReferencePlace { x: inside(x, width, screen_width), y: inside(y, tall, screen_height) }
 }
 
-#[uniffi::export]
 impl CanvasSession {
     /// The Reference window as this artwork left it.
     pub fn reference_window(&self) -> ReferenceWindowState {

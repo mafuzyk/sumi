@@ -18,7 +18,7 @@ use sumi_engine::formats::{self, PsdKind, PsdLayer};
 use sumi_engine::geom::Vec2;
 use sumi_engine::view::View;
 
-use crate::{CanvasSession, MobileError};
+use crate::{CanvasError, CanvasSession};
 
 /// The gallery thumbnail's longest side, pixels.
 pub const THUMBNAIL_SIDE: u32 = 512;
@@ -35,7 +35,6 @@ const FORMAT: &str = "sumi-artwork";
 const VERSION: u32 = 1;
 
 /// Whether the artwork in `dir` plays: a model, which turns, or Animation Assist or Page Assist on, from its file alone.
-#[uniffi::export]
 pub fn artwork_plays(dir: String) -> bool {
     let text = fs::read_to_string(Path::new(&dir).join("artwork.json"));
     let file = text.ok().and_then(|t| serde_json::from_str::<ArtworkFile>(&t).ok());
@@ -49,8 +48,7 @@ pub fn artwork_plays(dir: String) -> bool {
 /// Only `artwork.json` is read: its document holds the layer state the check needs, so no layer's
 /// pixels are opened and no GPU is asked for. A missing or foreign-sized layer is found only by
 /// the export buffer, when the file is written.
-#[uniffi::export]
-pub fn artwork_clip_preflight(dir: String, kra: bool) -> Result<Vec<String>, MobileError> {
+pub fn artwork_clip_preflight(dir: String, kra: bool) -> Result<Vec<String>, CanvasError> {
     let file = read_artwork_file(Path::new(&dir))?;
     preflight_lines(&file.document.repaired(), export_format(kra))
 }
@@ -108,7 +106,7 @@ impl SavedView {
     }
 
     /// It again, in a window `window` pixels.
-    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    #[allow(dead_code)]
     pub(crate) fn view(&self, window: (u32, u32)) -> Option<View> {
         View::centred(Vec2::new(self.centre[0], self.centre[1]), self.zoom, self.rotation, window)
     }
@@ -117,7 +115,7 @@ impl SavedView {
 /// Whether `view` shows enough of a `canvas`-sized canvas in a `window`-sized window to work on:
 /// its box on screen covers a tenth of the window, or half of it is in the window. A kept view
 /// that doesn't (the canvas pushed off the page) is not used again.
-#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+#[allow(dead_code)]
 pub(crate) fn shows_canvas(view: &View, window: (u32, u32), canvas: (u32, u32)) -> bool {
     let m = view.to_screen();
     let (cw, ch) = (canvas.0 as f32, canvas.1 as f32);
@@ -133,7 +131,7 @@ pub(crate) fn shows_canvas(view: &View, window: (u32, u32), canvas: (u32, u32)) 
 /// An artwork's time-lapse in a package: whether it records, its video's settings (quality 0 to 3,
 /// resolution 0 to 2, HEVC or H.264), and its video so far as MP4 files in order, `width` ×
 /// `height` at `fps` and `bitrate` bits a second.
-#[derive(Clone, Debug, uniffi::Record)]
+#[derive(Clone, Debug)]
 pub struct PackageTimeLapse {
     pub recording: bool,
     pub quality: u8,
@@ -147,7 +145,7 @@ pub struct PackageTimeLapse {
 }
 
 /// What an artwork keeps about itself besides the picture.
-#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct ArtworkInfo {
     /// When it was made, milliseconds since 1970 (0: not known).
     #[serde(default)]
@@ -163,8 +161,8 @@ pub struct ArtworkInfo {
     pub author: String,
 }
 
-pub(crate) fn file_error(context: &str, e: impl std::fmt::Display) -> MobileError {
-    MobileError::File { reason: format!("{context}: {e}") }
+pub(crate) fn file_error(context: &str, e: impl std::fmt::Display) -> CanvasError {
+    CanvasError::File { reason: format!("{context}: {e}") }
 }
 
 /// `path`'s bytes if it is a plain file of at most `most` bytes. Anything else is an error, as a
@@ -179,11 +177,11 @@ fn read_capped(path: &Path, most: u64) -> std::io::Result<Vec<u8>> {
 }
 
 /// The artwork file in `dir`, read and checked as [`CanvasSession::open`] accepts it.
-fn read_artwork_file(dir: &Path) -> Result<ArtworkFile, MobileError> {
+fn read_artwork_file(dir: &Path) -> Result<ArtworkFile, CanvasError> {
     let text = fs::read_to_string(dir.join("artwork.json")).map_err(|e| file_error("reading the artwork", e))?;
     let file: ArtworkFile = serde_json::from_str(&text).map_err(|e| file_error("reading the artwork", e))?;
     if !crate::legacy::is_supported_artwork_format(&file.format) || file.version > VERSION {
-        return Err(MobileError::File {
+        return Err(CanvasError::File {
             reason: format!("not an artwork this version can open ({} {})", file.format, file.version),
         });
     }
@@ -195,10 +193,10 @@ fn read_artwork_file(dir: &Path) -> Result<ArtworkFile, MobileError> {
 ///
 /// It is the writer's own check without pixels: no layer is rendered, no cache rebuilt, no file
 /// touched.
-fn preflight_lines(document: &Document, format: sumi_clip::ExportFormat) -> Result<Vec<String>, MobileError> {
+fn preflight_lines(document: &Document, format: sumi_clip::ExportFormat) -> Result<Vec<String>, CanvasError> {
     match sumi_clip::preflight_export(document, format) {
         Ok(warnings) => Ok(warnings.iter().map(sumi_clip::ExportWarning::message).collect()),
-        Err(refusal) => Err(MobileError::File { reason: refusal.to_string() }),
+        Err(refusal) => Err(CanvasError::File { reason: refusal.to_string() }),
     }
 }
 
@@ -331,7 +329,7 @@ impl crate::State {
         &mut self,
         dir: &Path,
         known: &std::collections::HashMap<LayerId, u64>,
-    ) -> Result<SaveSnapshot, MobileError> {
+    ) -> Result<SaveSnapshot, CanvasError> {
         let changed = |id: LayerId, rgba: Vec<u8>| {
             let hash = pixels_hash(&rgba);
             let there = known.get(&id) == Some(&hash) && layer_path(dir, id).exists();
@@ -384,7 +382,7 @@ impl crate::State {
             canvas.render(gpu, &mut self.doc, None);
             let changed_now = canvas.take_changed();
             changed_ids = changed_now.iter().copied().collect();
-            let mut read_all = || -> Result<(), MobileError> {
+            let mut read_all = || -> Result<(), CanvasError> {
                 // the layers with pixels (a group has none of its own)
                 for id in self.doc.pixel_layer_ids() {
                     // unchanged since it was read or saved, its file there: left as it is, unread
@@ -492,7 +490,7 @@ fn write_or_keep_changed(
     saved: &mut Saved,
     dir: &Path,
     snapshot: SaveSnapshot,
-) -> Result<(), MobileError> {
+) -> Result<(), CanvasError> {
     let changed = snapshot.changed.clone();
     let result = write_artwork(saved, dir, snapshot);
     if result.is_err()
@@ -563,7 +561,7 @@ impl CanvasSession {
     }
 
     /// [`CanvasSession::save_if_idle`] with what the last saves wrote (its lock held).
-    fn save_if_idle_with(&self, saved: &mut Saved, dir: &str) -> Result<bool, MobileError> {
+    fn save_if_idle_with(&self, saved: &mut Saved, dir: &str) -> Result<bool, CanvasError> {
         let (snapshot, edits) = {
             let mut guard = self.shared.lock_finished();
             let st = &mut *guard;
@@ -582,7 +580,7 @@ impl CanvasSession {
 
 /// Writes a save into `dir` (made if missing): the layers that changed since the last save there,
 /// the thumbnail and the document.
-fn write_artwork(saved: &mut Saved, dir: &Path, snapshot: SaveSnapshot) -> Result<(), MobileError> {
+fn write_artwork(saved: &mut Saved, dir: &Path, snapshot: SaveSnapshot) -> Result<(), CanvasError> {
     let SaveSnapshot {
         file,
         mut layers,
@@ -626,7 +624,7 @@ fn write_artwork(saved: &mut Saved, dir: &Path, snapshot: SaveSnapshot) -> Resul
     // in place one by one, a save after a crop cut short left layers of the new size beside a
     // document of the old, which the next open would drop.
     let mut staged: Vec<(PathBuf, PathBuf)> = Vec::new();
-    let stage = |result: Result<PathBuf, MobileError>, to: PathBuf, staged: &mut Vec<(PathBuf, PathBuf)>| {
+    let stage = |result: Result<PathBuf, CanvasError>, to: PathBuf, staged: &mut Vec<(PathBuf, PathBuf)>| {
         result.map(|tmp| staged.push((tmp, to)))
     };
     let written = (|| {
@@ -756,11 +754,9 @@ fn write_artwork(saved: &mut Saved, dir: &Path, snapshot: SaveSnapshot) -> Resul
     Ok(())
 }
 
-#[uniffi::export]
 impl CanvasSession {
     /// A new artwork `width` × `height` at `dpi`, its background colour (sRGB 0..1, three values)
     /// and whether it shows, and its name: a custom canvas.
-    #[uniffi::constructor]
     pub fn new_custom(
         width: u32,
         height: u32,
@@ -786,7 +782,6 @@ impl CanvasSession {
 
     /// A new artwork the size of `image` (straight RGBA8), the picture as its one layer; scaled
     /// down to fit if it is larger than a canvas may be here.
-    #[uniffi::constructor]
     pub fn from_image(image: crate::layers::ThumbnailImage, name: String) -> Arc<CanvasSession> {
         let (sw, sh) = (image.width.max(1), image.height.max(1));
         let mut pixels = image.rgba;
@@ -824,8 +819,7 @@ impl CanvasSession {
     }
 
     /// Opens an artwork saved with [`CanvasSession::save`].
-    #[uniffi::constructor]
-    pub fn open(dir: String) -> Result<Arc<CanvasSession>, MobileError> {
+    pub fn open(dir: String) -> Result<Arc<CanvasSession>, CanvasError> {
         let dir = PathBuf::from(dir);
         let file = read_artwork_file(&dir)?;
         let mut doc = file.document.repaired();
@@ -901,7 +895,7 @@ impl CanvasSession {
     /// Saves started together run one after the other. An adjustment or transform still open (the
     /// app going into the background) stays open: its layers are saved as they show, and again
     /// once it ends.
-    pub fn save(&self, dir: String) -> Result<(), MobileError> {
+    pub fn save(&self, dir: String) -> Result<(), CanvasError> {
         let mut saved = self.shared.saving.lock().unwrap_or_else(|e| e.into_inner());
         let (snapshot, edits) = {
             let mut guard = self.shared.lock_finished();
@@ -920,7 +914,7 @@ impl CanvasSession {
 
     /// Saves as [`CanvasSession::save`] does, but only when nothing is under way that saving
     /// would end (a stroke, a transform, an adjustment, text being edited...); false if it didn't.
-    pub fn save_if_idle(&self, dir: String) -> Result<bool, MobileError> {
+    pub fn save_if_idle(&self, dir: String) -> Result<bool, CanvasError> {
         let mut saved = self.shared.saving.lock().unwrap_or_else(|e| e.into_inner());
         self.save_if_idle_with(&mut saved, &dir)
     }
@@ -990,7 +984,7 @@ impl CanvasSession {
     }
 
     /// Writes the flattened picture, full size and with straight alpha, to `path` as a PNG.
-    pub fn export_png(&self, path: String) -> Result<(), MobileError> {
+    pub fn export_png(&self, path: String) -> Result<(), CanvasError> {
         let (w, h, straight, icc) = self.finished_picture()?;
         self.exported(0.7);
         write_atomically(Path::new(&path), |p| write_png(p, w, h, &straight, &icc))?;
@@ -1000,7 +994,7 @@ impl CanvasSession {
 
     /// Writes the flattened picture, full size and onto white, to `path` as a JPEG, with the
     /// canvas's colour profile.
-    pub fn export_jpeg(&self, path: String) -> Result<(), MobileError> {
+    pub fn export_jpeg(&self, path: String) -> Result<(), CanvasError> {
         let (w, h, straight, icc) = self.finished_picture()?;
         self.exported(0.7);
         let bytes = sumi_engine::jpeg::encode_tagged(&onto_white(&straight), w, h, JPEG_QUALITY, &icc);
@@ -1011,8 +1005,7 @@ impl CanvasSession {
     }
 
     /// Opens a layered artwork package (as the Share menu's first row writes) from `path`.
-    #[uniffi::constructor]
-    pub fn open_package(path: String) -> Result<Arc<CanvasSession>, MobileError> {
+    pub fn open_package(path: String) -> Result<Arc<CanvasSession>, CanvasError> {
         let bytes = fs::read(&path).map_err(|e| file_error("opening the file", e))?;
         let imported =
             sumi_engine::native::read(&bytes).map_err(|e| file_error("opening the file", format!("{e:?}")))?;
@@ -1035,7 +1028,7 @@ impl CanvasSession {
         path: String,
         seed: u64,
         time_lapse: Option<PackageTimeLapse>,
-    ) -> Result<(), MobileError> {
+    ) -> Result<(), CanvasError> {
         let time_lapse = match time_lapse {
             Some(t) => {
                 let mut segments = Vec::with_capacity(t.segments.len());
@@ -1109,7 +1102,7 @@ impl CanvasSession {
     }
 
     /// The artwork as a layered PSD (groups, masks, clipping, blend modes kept) at `path`.
-    pub fn export_psd(&self, path: String) -> Result<(), MobileError> {
+    pub fn export_psd(&self, path: String) -> Result<(), CanvasError> {
         let p = self.pictures(true)?;
         let layers = psd_layers(&p);
         let (icc, inks) = file_colours(&p.doc);
@@ -1126,7 +1119,7 @@ impl CanvasSession {
     /// The artwork as a native CLIP STUDIO PAINT (`.clip`), or with `kra` a Krita (`.kra`),
     /// document at `path`; returns what the file keeps differently, a line each. The imported
     /// source is never touched: only `path` is written.
-    pub fn export_clip(&self, path: String, kra: bool) -> Result<Vec<String>, MobileError> {
+    pub fn export_clip(&self, path: String, kra: bool) -> Result<Vec<String>, CanvasError> {
         let p = self.pictures(true)?;
         let mut pixels = Vec::with_capacity(p.layers.len() + p.masks.len());
         for l in p.doc.layers() {
@@ -1161,14 +1154,14 @@ impl CanvasSession {
     /// pixels are rendered, no stroke has to be finished and no file is touched, so Share can ask
     /// it every frame its panel is open. A missing or foreign-sized layer is found only when the
     /// file is written, as it needs the export buffer.
-    pub fn clip_preflight(&self, kra: bool) -> Result<Vec<String>, MobileError> {
+    pub fn clip_preflight(&self, kra: bool) -> Result<Vec<String>, CanvasError> {
         let format = export_format(kra);
         let guard = self.shared.lock();
         preflight_lines(&guard.doc, format)
     }
 
     /// The flattened picture as a TIFF at `path`.
-    pub fn export_tiff(&self, path: String) -> Result<(), MobileError> {
+    pub fn export_tiff(&self, path: String) -> Result<(), CanvasError> {
         let p = self.pictures(false)?;
         let bytes = match file_colours(&p.doc) {
             (icc, Some(inks)) => formats::tiff_cmyk(p.width, p.height, p.doc.dpi, &icc, &p.composite, &inks),
@@ -1183,7 +1176,7 @@ impl CanvasSession {
     /// The picture as a one-page PDF, or (`layers`) a page for each layer, bottom first, at `path`.
     /// The flattened picture, or each layer (`layers`), as a page of a PDF at `path`: exact at
     /// `quality` 100, JPEG below it.
-    pub fn export_pdf(&self, path: String, layers: bool, quality: u8) -> Result<(), MobileError> {
+    pub fn export_pdf(&self, path: String, layers: bool, quality: u8) -> Result<(), CanvasError> {
         let p = self.pictures(layers)?;
         let pages: Vec<&[u8]> = if layers {
             p.doc.layers().iter().filter_map(|l| p.layers.get(&l.id)).map(Vec::as_slice).collect()
@@ -1200,13 +1193,13 @@ impl CanvasSession {
 
     /// Each layer as a PNG in `dir` (made if missing), bottom first, named after it; returns
     /// their paths.
-    pub fn export_layer_pngs(&self, dir: String) -> Result<Vec<String>, MobileError> {
+    pub fn export_layer_pngs(&self, dir: String) -> Result<Vec<String>, CanvasError> {
         self.write_layer_pngs(dir, |_, _| true)
     }
 
     /// The current and picked layers (a group: the layers in it) each as a PNG in folder `dir`;
     /// returns the files' paths.
-    pub fn export_chosen_pngs(&self, dir: String) -> Result<Vec<String>, MobileError> {
+    pub fn export_chosen_pngs(&self, dir: String) -> Result<Vec<String>, CanvasError> {
         self.write_layer_pngs(dir, |doc, id| doc.chosen().iter().any(|c| *c == id || doc.is_inside(id, *c)))
     }
 
@@ -1256,7 +1249,6 @@ impl CanvasSession {
 
 /// The signature kept in the artwork's folder `dir` (about/signature.json): its strokes, each the
 /// x, y of its points across the signature's box (0..1); none if there is none.
-#[uniffi::export]
 pub fn read_signature(dir: String) -> Vec<Vec<f32>> {
     let file = Path::new(&dir).join("about").join("signature.json");
     let read: Option<Vec<Vec<f32>>> = fs::read(file).ok().and_then(|b| serde_json::from_slice(&b).ok());
@@ -1264,8 +1256,7 @@ pub fn read_signature(dir: String) -> Vec<Vec<f32>> {
 }
 
 /// Keeps `strokes` as the signature in the artwork's folder `dir` (see [`read_signature`]).
-#[uniffi::export]
-pub fn write_signature(dir: String, strokes: Vec<Vec<f32>>) -> Result<(), MobileError> {
+pub fn write_signature(dir: String, strokes: Vec<Vec<f32>>) -> Result<(), CanvasError> {
     let about = Path::new(&dir).join("about");
     fs::create_dir_all(&about).map_err(|e| file_error("keeping the signature", e))?;
     let json = serde_json::to_string(&strokes).map_err(|e| file_error("keeping the signature", e))?;
@@ -1276,8 +1267,7 @@ pub fn write_signature(dir: String, strokes: Vec<Vec<f32>>) -> Result<(), Mobile
 
 /// Keeps the picture `bytes` as the author's photo in the artwork's folder `dir`, in the old
 /// one's place only once written whole.
-#[uniffi::export]
-pub fn write_photo(dir: String, bytes: Vec<u8>) -> Result<(), MobileError> {
+pub fn write_photo(dir: String, bytes: Vec<u8>) -> Result<(), CanvasError> {
     let about = Path::new(&dir).join("about");
     fs::create_dir_all(&about).map_err(|e| file_error("keeping the photo", e))?;
     write_atomically(&about.join("photo.jpg"), |p| fs::write(p, &bytes).map_err(|e| file_error("keeping the photo", e)))
@@ -1321,7 +1311,7 @@ impl CanvasSession {
         &self,
         dir: String,
         wanted: impl Fn(&Document, LayerId) -> bool,
-    ) -> Result<Vec<String>, MobileError> {
+    ) -> Result<Vec<String>, CanvasError> {
         let p = self.pictures(true)?;
         let icc = p.doc.picture_icc();
         let proof = proof_table(&p.doc);
@@ -1358,7 +1348,7 @@ impl CanvasSession {
         Ok(paths)
     }
 
-    fn pictures(&self, with_layers: bool) -> Result<Pictures, MobileError> {
+    fn pictures(&self, with_layers: bool) -> Result<Pictures, CanvasError> {
         self.exported(0.0);
         let mut guard = self.shared.lock_finished();
         let st = &mut *guard;
@@ -1478,7 +1468,6 @@ fn old_layer_data_path(dir: &Path, id: LayerId) -> PathBuf {
 }
 
 /// What the apps say when saving an artwork failed for `reason` (a save's error).
-#[uniffi::export]
 pub fn save_failure_said(reason: String) -> String {
     if reason.to_lowercase().contains("space") {
         "There's no room left to save this artwork.".to_owned()
@@ -1490,8 +1479,8 @@ pub fn save_failure_said(reason: String) -> String {
 /// Writes `path` by writing a temporary file beside it and renaming it into place.
 pub(crate) fn write_atomically(
     path: &Path,
-    write: impl FnOnce(&Path) -> Result<(), MobileError>,
-) -> Result<(), MobileError> {
+    write: impl FnOnce(&Path) -> Result<(), CanvasError>,
+) -> Result<(), CanvasError> {
     let tmp = write_beside(path, write)?;
     if let Err(e) = fs::rename(&tmp, path) {
         // the write was whole, but it couldn't be put in place: it leaves nothing beside
@@ -1505,8 +1494,8 @@ pub(crate) fn write_atomically(
 /// renamed over it; the file written.
 pub(crate) fn write_beside(
     path: &Path,
-    write: impl FnOnce(&Path) -> Result<(), MobileError>,
-) -> Result<PathBuf, MobileError> {
+    write: impl FnOnce(&Path) -> Result<(), CanvasError>,
+) -> Result<PathBuf, CanvasError> {
     let tmp = staging_beside(path)?;
     if let Err(e) = write(&tmp) {
         let _ = fs::remove_file(&tmp);
@@ -1525,7 +1514,7 @@ pub(crate) fn write_beside(
 /// It is made and closed before the callback writes it by path: a process taking the name away and
 /// making its own in between could still be written into, a window saving by path leaves open (the
 /// desktop's time-lapse saves accept it too).
-fn staging_beside(path: &Path) -> Result<PathBuf, MobileError> {
+fn staging_beside(path: &Path) -> Result<PathBuf, CanvasError> {
     // a name of its own, so that no other write of the same file can touch it
     static WRITES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let mut named_after = true;
@@ -1552,7 +1541,7 @@ fn staging_beside(path: &Path) -> Result<PathBuf, MobileError> {
 }
 
 /// A PNG of RGBA8 pixels, carrying the colour profile `icc` (none if empty).
-pub(crate) fn write_png(path: &Path, width: u32, height: u32, rgba: &[u8], icc: &[u8]) -> Result<(), MobileError> {
+pub(crate) fn write_png(path: &Path, width: u32, height: u32, rgba: &[u8], icc: &[u8]) -> Result<(), CanvasError> {
     let bytes = png_bytes(width, height, rgba, icc)?;
     fs::write(path, bytes).map_err(|e| file_error("saving", e))
 }
@@ -1563,7 +1552,7 @@ pub(crate) fn rgba_png(width: u32, height: u32, premultiplied: &[u8]) -> Vec<u8>
 }
 
 /// A PNG of straight RGBA8 pixels, carrying `icc` if it isn't empty.
-fn png_bytes(width: u32, height: u32, rgba: &[u8], icc: &[u8]) -> Result<Vec<u8>, MobileError> {
+fn png_bytes(width: u32, height: u32, rgba: &[u8], icc: &[u8]) -> Result<Vec<u8>, CanvasError> {
     let mut out = Vec::new();
     let mut info = png::Info::with_size(width, height);
     info.color_type = png::ColorType::Rgba;
@@ -1595,14 +1584,14 @@ impl Opened {
     /// be lost.
     // only the tests read it now, the opening paths taking [`Opened::read`] for its flag
     #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn pixels(self, width: u32, height: u32) -> Result<Vec<u8>, MobileError> {
+    pub(crate) fn pixels(self, width: u32, height: u32) -> Result<Vec<u8>, CanvasError> {
         self.read(width, height).map(|(rgba, _)| rgba)
     }
 
     /// The pixels as [`Opened::pixels`] reads them, and whether only part of the file could be
     /// read: the rows before the damage, the rest clear. A layer read only in part is kept as
     /// unreadable, so its file is copied aside before a save writes over it.
-    pub(crate) fn read(self, width: u32, height: u32) -> Result<(Vec<u8>, bool), MobileError> {
+    pub(crate) fn read(self, width: u32, height: u32) -> Result<(Vec<u8>, bool), CanvasError> {
         match self {
             Opened::Pixels(rgba) => Ok((rgba, false)),
             Opened::Png(bytes) => decode_png_into(std::io::Cursor::new(bytes), width, height, true),
@@ -1663,14 +1652,14 @@ pub(crate) fn unreadable_path(dir: &Path, id: LayerId) -> PathBuf {
 }
 
 /// A PNG's RGBA8 pixels, which must be `width` × `height`.
-pub(crate) fn read_png(path: &Path, width: u32, height: u32) -> Result<Vec<u8>, MobileError> {
+pub(crate) fn read_png(path: &Path, width: u32, height: u32) -> Result<Vec<u8>, CanvasError> {
     let file = fs::File::open(path).map_err(|e| file_error("opening a layer", e))?;
     decode_png(BufReader::new(file), width, height)
 }
 
 /// The RGBA8 pixels of the PNG `from` reads, which must be `width` × `height` (a PNG read only in
 /// part keeps the rows before the damage, the rest clear).
-fn decode_png(from: impl std::io::BufRead + std::io::Seek, width: u32, height: u32) -> Result<Vec<u8>, MobileError> {
+fn decode_png(from: impl std::io::BufRead + std::io::Seek, width: u32, height: u32) -> Result<Vec<u8>, CanvasError> {
     decode_png_into(from, width, height, false).map(|(rgba, _)| rgba)
 }
 
@@ -1682,7 +1671,7 @@ fn decode_png_into(
     width: u32,
     height: u32,
     fit: bool,
-) -> Result<(Vec<u8>, bool), MobileError> {
+) -> Result<(Vec<u8>, bool), CanvasError> {
     let decoder = png::Decoder::new(from);
     let mut reader = decoder.read_info().map_err(|e| file_error("opening a layer", e))?;
     let (color, depth) = reader.output_color_type();
@@ -1737,7 +1726,7 @@ fn decode_png_into(
 impl CanvasSession {
     /// The flattened picture as it is exported, full size: its width, height, pixels (straight
     /// RGBA8; a CMYK canvas's as its press prints them) and the colour profile they are in.
-    fn finished_picture(&self) -> Result<(u32, u32, Vec<u8>, Vec<u8>), MobileError> {
+    fn finished_picture(&self) -> Result<(u32, u32, Vec<u8>, Vec<u8>), CanvasError> {
         self.exported(0.0);
         let (w, h, rgba, icc) = {
             let mut guard = self.shared.lock_finished();
@@ -1766,7 +1755,6 @@ impl CanvasSession {
 /// What an artwork called `name` is called as a file it is exported to, before the extension:
 /// its letters, digits, spaces, `_` and `-` (the rest left out, the ends trimmed), or "Untitled
 /// Artwork" with none left; a layered package's (`package`) with underscores for its spaces.
-#[uniffi::export]
 pub fn export_file_name(name: String, package: bool) -> String {
     let kept: String = name.chars().filter(|c| c.is_alphanumeric() || " _-".contains(*c)).collect();
     let base = match kept.trim() {
@@ -1838,7 +1826,7 @@ pub(crate) fn mask_rgba(grey: &[u8]) -> Vec<u8> {
 }
 
 /// How bringing in a document's pages went.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PagesOutcome {
     Imported,
     /// More pages than a canvas their size holds as layers (`most`).
@@ -1852,7 +1840,6 @@ pub enum PagesOutcome {
 /// Makes an artwork named `name` in the folder `dir` from `count` pages, each a `width` x `height`
 /// PNG `page-N.png` (N from 1) in the folder `pages`: a layer each, "Page N", the first at the
 /// bottom, with Page Assist on and `dpi` its resolution. Used for a PDF's pages.
-#[uniffi::export]
 pub fn import_pages(
     pages: String,
     count: u32,
@@ -1926,7 +1913,7 @@ pub fn import_pages(
 }
 
 /// How bringing in a PSD went.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PsdOutcome {
     Imported,
     /// More layers than a canvas its size holds (`most`).
@@ -1941,8 +1928,7 @@ pub enum PsdOutcome {
 
 /// The time-lapse the package at `path` keeps, its segments written into the folder `dir` as
 /// `segment-N.mp4` (N from 1, in order); none if it keeps none.
-#[uniffi::export]
-pub fn package_time_lapse(path: String, dir: String) -> Result<Option<PackageTimeLapse>, MobileError> {
+pub fn package_time_lapse(path: String, dir: String) -> Result<Option<PackageTimeLapse>, CanvasError> {
     let bytes = fs::read(&path).map_err(|e| file_error("opening the file", e))?;
     let Some(t) =
         sumi_engine::native::read_time_lapse(&bytes).map_err(|e| file_error("opening the file", format!("{e:?}")))?
@@ -1974,7 +1960,6 @@ pub fn package_time_lapse(path: String, dir: String) -> Result<Option<PackageTim
 
 /// Makes the layered PSD (or PSB) at `path` an artwork named `name` in the folder `dir`: its
 /// layers, groups and masks, and its flattened picture as the gallery's thumbnail until opened.
-#[uniffi::export]
 pub fn import_psd(path: String, dir: String, name: String) -> PsdOutcome {
     use sumi_engine::psd::{self, PsdError};
     let Ok(bytes) = fs::read(&path) else { return PsdOutcome::Unreadable };
@@ -2231,7 +2216,7 @@ mod signature_tests {
         assert!(read_png_bytes_sized(&bytes, 4, 3).is_err());
     }
 
-    fn read_png_bytes_sized(bytes: &[u8], width: u32, height: u32) -> Result<Vec<u8>, MobileError> {
+    fn read_png_bytes_sized(bytes: &[u8], width: u32, height: u32) -> Result<Vec<u8>, CanvasError> {
         decode_png(std::io::Cursor::new(bytes.to_vec()), width, height)
     }
 
@@ -2324,7 +2309,7 @@ mod atomic_write_tests {
         paths
     }
 
-    fn write_bytes(path: &Path, bytes: &[u8]) -> Result<(), MobileError> {
+    fn write_bytes(path: &Path, bytes: &[u8]) -> Result<(), CanvasError> {
         fs::write(path, bytes).map_err(|e| file_error("writing", e))
     }
 

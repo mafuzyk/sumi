@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use sumi_engine::palette::{self, Palette};
 
 /// A palette as the panels show it: its name and its thirty swatches (empty slots none).
-#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PaletteInfo {
     pub name: String,
     pub colors: Vec<Option<u32>>,
@@ -20,7 +20,7 @@ impl From<&Palette> for PaletteInfo {
 }
 
 /// The palettes and which one is the default.
-#[derive(uniffi::Object)]
+
 pub struct Palettes {
     file: Option<PathBuf>,
     kept: Mutex<(Vec<Palette>, usize)>,
@@ -29,11 +29,9 @@ pub struct Palettes {
     failure: Mutex<(Option<String>, bool)>,
 }
 
-#[uniffi::export]
 impl Palettes {
     /// The palettes kept at `path` (or, when there are none there yet, the ones a new install
     /// starts with).
-    #[uniffi::constructor]
     pub fn open(path: String) -> Arc<Palettes> {
         let file = PathBuf::from(path);
         let kept = std::fs::read_to_string(&file)
@@ -162,7 +160,6 @@ impl Palettes {
 
 /// A plain name for a colour (0xRRGGBB), as a palette's cards show it: a grey by its lightness, or
 /// a hue with "Dark", "Light" or "Grayish" before it.
-#[uniffi::export]
 pub fn colour_name(rgb: u32) -> String {
     let [r, g, b] = [16, 8, 0].map(|shift| ((rgb >> shift) & 0xFF) as f32 / 255.0);
     let (max, min) = (r.max(g).max(b), r.min(g).min(b));

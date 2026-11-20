@@ -8,7 +8,7 @@ use sumi_engine::selection::{ColourFlood, Combine, Mask, feather_radius};
 use crate::{CanvasSession, State};
 
 /// How a new shape joins the selection there is.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SelectionJoin {
     Add,
     Remove,
@@ -25,7 +25,7 @@ impl From<SelectionJoin> for Combine {
 
 /// How the selection shows: bands over what is not selected, or what is selected tinted (while
 /// selecting by colour) or covered (while its threshold is being dragged).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SelectionDisplay {
     Stripes,
     Tint,
@@ -123,7 +123,6 @@ impl State {
     }
 }
 
-#[uniffi::export]
 impl CanvasSession {
     /// A rectangle (or with `ellipse`, the ellipse in it) between window points (`x0`, `y0`) and
     /// (`x1`, `y1`) joins the selection. Drawn on the window, so it turns with the view.

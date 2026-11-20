@@ -40,7 +40,7 @@ const SELECT_STEP: f32 = TAP_SLOP;
 
 /// What the platform's own pen settings ask a double-tap or a squeeze to do, followed when Gesture
 /// controls leave the gesture alone.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PenPreferred {
     /// Turned off.
     Ignore,
@@ -58,7 +58,7 @@ pub enum PenPreferred {
 }
 
 /// How far along a squeeze is.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SqueezePhase {
     Began,
     Changed,
@@ -68,7 +68,7 @@ pub enum SqueezePhase {
 
 /// The pen over the canvas: where (window pixels), how high (a share of the height it is sensed
 /// at, 0..1; 0 where the platform doesn't say), and when (the event clock, milliseconds).
-#[derive(Clone, Copy, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PenHover {
     pub x: f32,
     pub y: f32,
@@ -93,7 +93,7 @@ impl PenHover {
 
 /// The brush's outline under the hovering pen: where (window pixels), and how strongly it shows
 /// (0..1, none at 0).
-#[derive(Clone, Copy, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct HoverCursor {
     pub x: f32,
     pub y: f32,
@@ -145,7 +145,6 @@ struct Squeeze {
     selected: Option<(f32, f32)>,
 }
 
-#[uniffi::export]
 impl CanvasSession {
     /// The pen held over the canvas (`hover`), or gone from over it (`None`): the brush's outline
     /// follows it ([`CanvasSession::pen_hover_cursor`]), Hover's touch works while it is there,

@@ -5,7 +5,7 @@ use sumi_engine::document::{BlendMode, Document, LayerId, LayerKind, Unseen};
 
 use crate::CanvasSession;
 
-#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct LayerInfo {
     pub id: u64,
     pub name: String,
@@ -37,7 +37,6 @@ pub struct LayerInfo {
     pub plugin_kind: Option<String>,
     /// What a plugin's layer is known by on its thumbnail: its kind's badge, or a plug when its kind
     /// draws none or its plugin is off or gone.
-    #[uniffi(default = None)]
     pub plugin_badge: Option<crate::PluginBadge>,
     /// How many groups it is inside.
     pub depth: u32,
@@ -51,27 +50,27 @@ pub struct LayerInfo {
 }
 
 /// A layer's pixels' version: new whenever they may have changed.
-#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct LayerVersion {
     pub id: u64,
     pub version: u64,
 }
 
 /// What a layer in the list is.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LayerType {
     Paint,
     Group,
     Mask,
 }
 
-#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct BlendModeInfo {
     pub id: u32,
     pub name: String,
 }
 
-#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct BackgroundInfo {
     pub r: f32,
     pub g: f32,
@@ -80,7 +79,7 @@ pub struct BackgroundInfo {
 }
 
 /// A small premultiplied RGBA image, rows top to bottom.
-#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ThumbnailImage {
     pub width: u32,
     pub height: u32,
@@ -110,7 +109,7 @@ pub struct InkBounds {
 }
 
 /// What a row of a layer's options menu does.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LayerOption {
     Rename,
     Ungroup,
@@ -139,7 +138,7 @@ pub enum LayerOption {
 
 /// A row of a layer's options menu: what it does, its label, whether it can be chosen, and for a
 /// switch whether it is on (a tick beside it). Every row closes the menu, a switch's too.
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LayerOptionRow {
     pub option: LayerOption,
     pub label: String,
@@ -250,14 +249,12 @@ fn layer_options(l: &LayerInfo, masked: bool, guided: bool) -> Vec<LayerOptionRo
 }
 
 /// The memory layers may take on this device, bytes: it sets how many layers a canvas holds.
-#[uniffi::export]
 pub fn set_layer_budget(bytes: u64) {
     sumi_engine::document::set_layer_budget(bytes);
 }
 
 /// How many layers a canvas `width` × `height` holds on this device (Custom Canvas's Maximum
 /// Layers).
-#[uniffi::export]
 pub fn layers_for(width: u32, height: u32) -> u32 {
     u32::try_from(sumi_engine::document::layer_cap_for(width, height)).unwrap_or(u32::MAX)
 }
@@ -267,7 +264,6 @@ pub fn layers_for(width: u32, height: u32) -> u32 {
 static RESIDENT_BUDGET: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Sets what the layers' textures may take, bytes (see [`RESIDENT_BUDGET`]).
-#[uniffi::export]
 pub fn set_resident_budget(bytes: u64) {
     RESIDENT_BUDGET.store(bytes, std::sync::atomic::Ordering::Relaxed);
 }
@@ -277,7 +273,7 @@ pub(crate) fn resident_budget() -> u64 {
 }
 
 /// How many layers a canvas holds, has, and of which kinds.
-#[derive(uniffi::Record)]
+
 pub struct LayerStats {
     /// Layers with pixels (paint layers and masks) the canvas can hold; each of a model's texture
     /// sets holds this many. The counts below are of all of them.
@@ -292,19 +288,16 @@ pub struct LayerStats {
 }
 
 /// The sRGB colour profile (ICC), as palette files carry it with their colours.
-#[uniffi::export]
 pub fn srgb_profile() -> Vec<u8> {
     sumi_engine::icc::icc(sumi_engine::profile::Profile::Srgb)
 }
 
 /// The layer blend modes in the order the panel lists them.
-#[uniffi::export]
 pub fn blend_modes() -> Vec<BlendModeInfo> {
     BlendMode::ALL.iter().map(|m| BlendModeInfo { id: m.id(), name: m.name().to_owned() }).collect()
 }
 
 /// The modes a brush and its burnt edges blend by, in the order the studio lists them.
-#[uniffi::export]
 pub fn brush_blend_modes() -> Vec<BlendModeInfo> {
     sumi_engine::brush::brush_blends()
         .into_iter()
@@ -313,7 +306,6 @@ pub fn brush_blend_modes() -> Vec<BlendModeInfo> {
 }
 
 /// The modes a dual brush's two strokes combine by, in the order the studio lists them.
-#[uniffi::export]
 pub fn combine_blend_modes() -> Vec<BlendModeInfo> {
     sumi_engine::brush::combine_modes()
         .into_iter()
@@ -322,7 +314,6 @@ pub fn combine_blend_modes() -> Vec<BlendModeInfo> {
 }
 
 /// The modes a brush's grain blends by, in the order the studio lists them.
-#[uniffi::export]
 pub fn grain_blend_modes() -> Vec<BlendModeInfo> {
     sumi_engine::brush::grain_blends()
         .into_iter()
@@ -330,7 +321,6 @@ pub fn grain_blend_modes() -> Vec<BlendModeInfo> {
         .collect()
 }
 
-#[uniffi::export]
 impl CanvasSession {
     /// Lets go of the GPU memory kept only to make later work quicker (spare textures, upload and
     /// readback buffers): for when the system is short of memory or the app is put away. Nothing
@@ -1214,7 +1204,7 @@ impl CanvasSession {
 }
 
 /// Why the current layer takes no change (see [`CanvasSession::why_blocked`]).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Blocked {
     Locked,
     /// A layer that doesn't show: hidden itself, in a hidden group (a mask, on a hidden layer),
@@ -1235,7 +1225,7 @@ pub enum Blocked {
 }
 
 /// Why a change to the current layer would go unseen (see [`CanvasSession::hidden_by`]).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HiddenBy {
     /// Its own box is off.
     Itself,

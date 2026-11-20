@@ -17,8 +17,7 @@ from shapely.ops import unary_union
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 MASTERS = os.path.join(ROOT, 'assets', 'icons', 'sumi')
 SLOTS = os.path.join(ROOT, 'assets', 'icons', 'slots.tsv')
-ICONS = os.path.join(ROOT, 'android', 'app', 'src', 'main', 'java', 'app',
-                     'sumi', 'ui', 'Icons.kt')
+ICONS = os.path.join(ROOT, 'assets', 'icons', 'source', 'Icons.kt')
 
 GAP = 1.2  # a knockout's width
 SQ2 = math.sqrt(0.5)

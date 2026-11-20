@@ -3,7 +3,7 @@
 //! the studio's camera, which a drag takes round the model and the wheel nearer; a light's cube is
 //! dragged across the view, and clicked, its settings show. The Environment popover: whether the
 //! environment shows, the exposure, and which environment lights the model. Also the environments
-//! themselves (our own panoramas, bundled with the Android app) a model is lit by.
+//! themselves (our own panoramas, bundled under assets/shared/environments) a model is lit by.
 
 use egui::{Align2, Color32, Id, Order, Pos2, Rect, Sense, Stroke, Ui, UiBuilder, pos2, vec2};
 use sumi_core::{CanvasSession, ModelLight};
@@ -44,12 +44,7 @@ pub const DEFAULT_ENVIRONMENT: &str = "mountain";
 
 macro_rules! environment {
     ($label:literal, $asset:literal, $icon:path) => {
-        (
-            $label,
-            $asset,
-            &$icon,
-            include_bytes!(concat!("../../android/app/src/main/assets/environments/", $asset, ".hdr")) as &[u8],
-        )
+        ($label, $asset, &$icon, include_bytes!(concat!("../../assets/shared/environments/", $asset, ".hdr")) as &[u8])
     };
 }
 

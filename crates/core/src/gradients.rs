@@ -6,14 +6,14 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 /// A gradient's colour stop: where along it (0..1) and its colour, 0xRRGGBB.
-#[derive(Clone, Copy, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GradientStop {
     pub position: f32,
     pub rgb: u32,
 }
 
 /// A gradient to map by: its name and colour stops, in any order (two at least).
-#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct GradientInfo {
     pub name: String,
     pub stops: Vec<GradientStop>,
@@ -94,16 +94,14 @@ fn write(list: &[GradientInfo]) -> String {
 }
 
 /// The gradient library.
-#[derive(uniffi::Object)]
+
 pub struct Gradients {
     file: Option<PathBuf>,
     kept: Mutex<Vec<GradientInfo>>,
 }
 
-#[uniffi::export]
 impl Gradients {
     /// The gradients kept at `path` (or ours, when none are kept there yet).
-    #[uniffi::constructor]
     pub fn open(path: String) -> Arc<Gradients> {
         let file = PathBuf::from(path);
         let kept = std::fs::read_to_string(&file).ok().and_then(|t| read(&t)).unwrap_or_else(ours);

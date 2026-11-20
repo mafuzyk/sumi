@@ -9,7 +9,7 @@ use sumi_engine::view::View;
 
 use crate::{CanvasSession, State};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GuideType {
     Grid,
     Isometric,
@@ -17,7 +17,7 @@ pub enum GuideType {
     Symmetry,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SymmetryType {
     Vertical,
     Horizontal,
@@ -26,7 +26,7 @@ pub enum SymmetryType {
 }
 
 /// The units a grid's size is typed and shown in, as its keypad lists them.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GuideUnit {
     Millimeters,
     Centimeters,
@@ -40,7 +40,7 @@ const SIZE_MAX: f32 = 1000.0;
 
 /// The guide as the editor and the overlay show it. Points are window pixels, x and y in turn;
 /// `lines` are segments (two points each); `color` is sRGB 0..1.
-#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct GuideInfo {
     pub on: bool,
     pub kind: GuideType,
@@ -235,7 +235,6 @@ impl State {
     }
 }
 
-#[uniffi::export]
 impl CanvasSession {
     pub fn guide(&self) -> GuideInfo {
         self.shared.lock().guide_info()

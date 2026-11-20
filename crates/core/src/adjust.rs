@@ -13,7 +13,7 @@ use crate::liquify::{self, LiquifyRun, Point};
 use crate::{CanvasSession, PenSample, PointerKind, Shared, State, ToolKind};
 
 /// The adjustments whose one amount (0..1) is dragged across the canvas.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SwipeAdjustment {
     GaussianBlur,
     Sharpen,
@@ -25,7 +25,7 @@ pub enum SwipeAdjustment {
 }
 
 /// The kinds of noise.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NoiseKind {
     Clouds,
     Billows,
@@ -33,7 +33,7 @@ pub enum NoiseKind {
 }
 
 /// The kinds of halftone.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HalftoneKind {
     FullColor,
     ScreenPrint,
@@ -41,14 +41,14 @@ pub enum HalftoneKind {
 }
 
 /// Chromatic aberration pulled from the middle, or moved one way everywhere.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ChromaticKind {
     Perspective,
     Displace,
 }
 
 /// Perspective blur from its puck all round, or only towards its arrow.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PerspectiveKind {
     Positional,
     Directional,
@@ -125,7 +125,7 @@ fn unit(v: f32) -> f32 {
 }
 
 /// The ways a glitch breaks the layer up.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GlitchKind {
     /// Blocks copied from a few blocks away.
     Artifact,
@@ -138,7 +138,7 @@ pub enum GlitchKind {
 }
 
 /// How a liquify brush moves what is under it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LiquifyKind {
     Push,
     TwirlRight,
@@ -151,7 +151,7 @@ pub enum LiquifyKind {
 }
 
 /// The liquify brush: its way, and its size, pressure and distortion sliders (0..1).
-#[derive(Clone, Copy, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LiquifyBrush {
     pub kind: LiquifyKind,
     pub size: f32,
@@ -320,7 +320,6 @@ impl Shared {
     }
 }
 
-#[uniffi::export]
 impl CanvasSession {
     /// Starts adjusting the current layer; false when it cannot be (locked or hidden). An
     /// adjustment already open is kept first.

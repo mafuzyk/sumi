@@ -350,7 +350,7 @@ fn share_changes(list: &[GalleryArtwork], kra: bool) -> crate::files::ClipChange
         let named = |line: String| if many { format!("{}: {line}", artwork.name) } else { line };
         match sumi_core::artwork_clip_preflight(artwork.dir.clone(), kra) {
             Ok(changes) => lines.extend(changes.into_iter().map(|change| named(change))),
-            Err(sumi_core::MobileError::File { reason } | sumi_core::MobileError::Window { reason }) => {
+            Err(sumi_core::CanvasError::File { reason }) => {
                 return crate::files::ClipChanges::Refused(named(reason));
             }
         }

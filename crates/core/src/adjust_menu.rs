@@ -5,7 +5,7 @@
 use crate::quick_menu::QuickAction;
 
 /// An adjustment from the Adjustments menu.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Adjustment {
     Hsb,
     ColorBalance,
@@ -51,31 +51,26 @@ fn entry(a: Adjustment) -> (Adjustment, &'static str, bool, Option<f32>) {
 }
 
 /// What the menu calls it.
-#[uniffi::export]
 pub fn adjustment_label(adjustment: Adjustment) -> String {
     entry(adjustment).1.to_owned()
 }
 
 /// Whether its amount is swiped across the canvas.
-#[uniffi::export]
 pub fn adjustment_swiped(adjustment: Adjustment) -> bool {
     entry(adjustment).2
 }
 
 /// Its amount when first painted on with the brush, if it starts at one of its own.
-#[uniffi::export]
 pub fn adjustment_pencil_amount(adjustment: Adjustment) -> Option<f32> {
     entry(adjustment).3
 }
 
 /// Whether it can be painted on with the brush (Pencil) instead of changing the whole layer.
-#[uniffi::export]
 pub fn adjustment_paintable(adjustment: Adjustment) -> bool {
     !matches!(adjustment, Adjustment::Liquify | Adjustment::Clone | Adjustment::Plugin)
 }
 
 /// The menu's groups in order: colour, blurs, effects, painting.
-#[uniffi::export]
 pub fn adjustment_groups() -> Vec<Vec<Adjustment>> {
     use Adjustment as A;
     vec![
@@ -87,7 +82,6 @@ pub fn adjustment_groups() -> Vec<Vec<Adjustment>> {
 }
 
 /// The adjustment a QuickMenu action opens, if it is one of them.
-#[uniffi::export]
 pub fn quick_action_adjustment(action: QuickAction) -> Option<Adjustment> {
     use Adjustment as A;
     Some(match action {

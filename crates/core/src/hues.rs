@@ -2,7 +2,7 @@
 //! evenly spaced points along each, a position between them interpolating.
 
 /// A hue control.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HueControl {
     /// The classic slider (and the value rows' hue): 25 points.
     Slider,
@@ -31,13 +31,11 @@ fn stops(control: HueControl) -> &'static [f32] {
 }
 
 /// The hues (degrees) at `control`'s evenly spaced points, for drawing it.
-#[uniffi::export]
 pub fn hue_stops(control: HueControl) -> Vec<f32> {
     stops(control).to_vec()
 }
 
 /// The hue (0..1) at `position` (0..1) along `control`.
-#[uniffi::export]
 pub fn hue_at(control: HueControl, position: f32) -> f32 {
     let stops = stops(control);
     let p = position.clamp(0.0, 1.0) * (stops.len() - 1) as f32;
@@ -49,7 +47,6 @@ pub fn hue_at(control: HueControl, position: f32) -> f32 {
 }
 
 /// Where `hue` (0..1) sits (0..1) along `control`.
-#[uniffi::export]
 pub fn hue_position(control: HueControl, hue: f32) -> f32 {
     let stops = stops(control);
     let h = hue.clamp(0.0, 1.0) * 360.0;

@@ -130,7 +130,6 @@ pub const OTHER_BRUSH_EXTENSIONS: [&str; 8] = ["abr", "gbr", "gih", "vbr", "kpp"
 
 /// Whether `bytes` are a zip holding brushes (a brush's archive, or a set's list), whatever the
 /// file is called: a brush or set file sent on as a plain zip.
-#[uniffi::export]
 pub fn is_brush_zip(bytes: Vec<u8>) -> bool {
     sumi_engine::zip::ZipReader::new(&bytes).is_some_and(|zip| brush_names(zip.names()))
 }
@@ -267,17 +266,15 @@ impl CanvasSession {
 
 /// Brushes read from a file for an app's interface (Android's) to add on its own thread once
 /// nothing there holds a library place (see [`ReadBrushes`]); the first add takes them.
-#[derive(uniffi::Object)]
+
 pub struct BrushesRead(std::sync::Mutex<Option<ReadBrushes>>);
 
 /// The brushes in a file the user chose, called `file_name` (if known), read as
 /// [`read_any_brushes`] reads them, not yet added; none if it holds none.
-#[uniffi::export]
 pub fn read_brushes(bytes: Vec<u8>, file_name: Option<String>) -> Option<std::sync::Arc<BrushesRead>> {
     read_any_brushes(&bytes, file_name).map(|read| std::sync::Arc::new(BrushesRead(std::sync::Mutex::new(Some(read)))))
 }
 
-#[uniffi::export]
 impl BrushesRead {
     /// Whether they are a library of their own: added, it is brought into use, which reads and
     /// writes its files (best off the interface's thread). False once added.
@@ -287,7 +284,6 @@ impl BrushesRead {
     }
 }
 
-#[uniffi::export]
 impl CanvasSession {
     /// Adds brushes read meanwhile ([`read_brushes`]) to the library, as
     /// [`CanvasSession::add_read_brushes`] does (one of ours from before into set `shown`).
@@ -349,7 +345,6 @@ impl CanvasSession {
     }
 }
 
-#[uniffi::export]
 impl CanvasSession {
     /// The library in use as a library file: its sets and their brushes in order, each tool's
     /// brush; none if it has no brushes.

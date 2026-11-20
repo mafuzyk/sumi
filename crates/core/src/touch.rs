@@ -48,7 +48,7 @@ pub const COMPANION_ZOOM_DISTANCE: f32 = 180.0;
 
 /// The single touch companion's mode: a lone press dragged on the canvas zooms it (up in, about
 /// where it went down) or moves it, instead of painting.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CompanionMode {
     Zoom,
     Move,
@@ -95,7 +95,7 @@ const FREEHAND_CLOSE: f32 = 22.0;
 const FREEHAND_STEP: f32 = 2.0;
 
 /// How the selection tool selects.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SelectKind {
     Automatic,
     Freehand,
@@ -106,7 +106,7 @@ pub enum SelectKind {
 /// What a freehand selection paints when it is let go: the enclosure filled with the paint colour,
 /// or erased. Ordinary freehand selection is left as it is; this is on only while one of these is
 /// set.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LassoAction {
     Fill,
     Erase,
@@ -114,7 +114,7 @@ pub enum LassoAction {
 
 /// The selection tool is open: how it selects, whether a new selection adds to the one there is
 /// or takes away from it, and where a colour selection's threshold starts (0..1).
-#[derive(Clone, Copy, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SelectTouch {
     pub kind: SelectKind,
     pub join: crate::SelectionJoin,
@@ -123,13 +123,13 @@ pub struct SelectTouch {
 
 /// A transform is open: touches work its box (a warp's control points shown as the advanced mesh
 /// has them, or only its corners).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Record)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TransformTouch {
     pub advanced_mesh: bool,
 }
 
 /// What Continue filling fills with: a colour (sRGB, 0..1) and the threshold it starts at.
-#[derive(Clone, Copy, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Fill {
     pub r: f32,
     pub g: f32,
@@ -138,7 +138,7 @@ pub struct Fill {
 }
 
 /// What a way of touching is set to do (Gesture controls).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GestureAction {
     Smudge,
     Erase,
@@ -153,14 +153,14 @@ pub enum GestureAction {
 }
 
 /// A pointer's move within an input event: which, and its input since the last.
-#[derive(Clone, Debug, uniffi::Record)]
+#[derive(Clone, Debug)]
 pub struct TouchMove {
     pub id: u64,
     pub samples: Vec<PenSample>,
 }
 
 /// The gesture settings the touches follow: what each way of touching does, and the delays.
-#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct TouchSettings {
     /// One finger paints as the pen does.
     pub finger_paint: bool,
@@ -225,7 +225,7 @@ impl Default for TouchSettings {
 }
 
 /// What the touches ask of the app (the canvas itself they paint and move on their own).
-#[derive(Clone, Debug, PartialEq, uniffi::Enum)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum TouchCommand {
     Undo,
     Redo,
@@ -742,7 +742,6 @@ impl CanvasSession {
     }
 }
 
-#[uniffi::export]
 impl CanvasSession {
     /// The gesture settings the touches follow from now on.
     pub fn set_touch_settings(&self, settings: TouchSettings) {

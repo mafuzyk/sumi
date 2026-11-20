@@ -1,7 +1,6 @@
-//! The app's GPU device: one for every artwork, as making one compiles the canvases' pipelines (a
-//! second and a half on a tablet).
+//! The app's GPU device: one for every artwork, with expensive pipelines precompiled.
 //!
-//! And which graphics backend it is made from (Android: Vulkan, then OpenGL ES). A driver that
+//! And which graphics backend it is made from. A driver that
 //! fails says so and the next backend is tried at once, but one that crashes takes the app down
 //! with it, leaving nothing to see. So the app keeps a record (in its own folder) of the backend
 //! it is trying while that is at risk: while the device and its pipelines are made, and until a
@@ -27,7 +26,7 @@ const LEFT_FREE: u64 = 512 << 20;
 const SMALL_ASK: u64 = 32 << 20;
 
 /// Whether `bytes` more of the GPU's memory would leave the system short. Only where the system
-/// says what it has free (Android, whose GPU memory is the same memory as everything else's).
+/// says what it has free (the unit tests simulate this on desktop).
 pub(crate) fn short_of_memory(bytes: u64) -> bool {
     bytes >= SMALL_ASK && memory_free().is_some_and(|free| bytes.saturating_add(LEFT_FREE) > free)
 }
@@ -43,18 +42,13 @@ fn memory_free() -> Option<u64> {
     MEMORY_FREE.with(std::cell::Cell::get)
 }
 
-#[cfg(all(target_os = "android", not(test)))]
-fn memory_free() -> Option<u64> {
-    available_in(&std::fs::read_to_string("/proc/meminfo").ok()?)
-}
-
-#[cfg(not(any(target_os = "android", test)))]
+#[cfg(not(test))]
 fn memory_free() -> Option<u64> {
     None
 }
 
 /// The memory `/proc/meminfo`'s text says is available, bytes.
-#[cfg(any(target_os = "android", test))]
+#[cfg(test)]
 pub(crate) fn available_in(meminfo: &str) -> Option<u64> {
     let line = meminfo.lines().find_map(|l| l.strip_prefix("MemAvailable:"))?;
     let kb: u64 = line.trim().strip_suffix("kB")?.trim().parse().ok()?;
@@ -68,7 +62,7 @@ static RECORD_FOLDER: Mutex<Option<PathBuf>> = Mutex::new(None);
 const RECORD: &str = "gpu-start.txt";
 
 /// Whether a canvas has shown in this run (so nothing is at risk any more).
-#[cfg_attr(not(any(target_os = "android", target_os = "ios")), allow(dead_code))]
+#[allow(dead_code)]
 static SHOWN: AtomicBool = AtomicBool::new(false);
 
 /// The app's device, held while one is made so that two aren't made at once.
@@ -83,7 +77,6 @@ pub fn keep_device(gpu: &Gpu) {
 
 /// Makes the app's device and its canvases' pipelines ahead of the first artwork, so that it opens
 /// at once; nothing if it is made. Slow: call it off the main thread.
-#[uniffi::export]
 pub fn warm_gpu() {
     start_log();
     let mut kept = kept();
@@ -111,7 +104,7 @@ pub fn warm_gpu() {
 /// Keeps the record of which graphics backend the app is trying in `dir` (the app's own folder),
 /// so that a driver crashing the app as its device is made, or before a canvas first shows, sends
 /// the next start to the next backend. Call it before [`warm_gpu`].
-#[uniffi::export]
+#[allow(dead_code)] // Optional fallback setup for desktop callers using warm_gpu independently.
 pub fn set_gpu_record_folder(dir: String) {
     start_log();
     // the canvases' pipelines kept there between runs as well, where the GPU can
@@ -119,24 +112,8 @@ pub fn set_gpu_record_folder(dir: String) {
     *RECORD_FOLDER.lock().unwrap_or_else(PoisonError::into_inner) = Some(PathBuf::from(dir));
 }
 
-/// The log, to Android's (tag "sumi"), with a panic's message and place in it (the platform
-/// drops what the standard error says); once.
-pub(crate) fn start_log() {
-    #[cfg(target_os = "android")]
-    {
-        static ONCE: std::sync::Once = std::sync::Once::new();
-        ONCE.call_once(|| {
-            android_logger::init_once(
-                android_logger::Config::default().with_max_level(log::LevelFilter::Info).with_tag("sumi"),
-            );
-            let before = std::panic::take_hook();
-            std::panic::set_hook(Box::new(move |info| {
-                log::error!("{info}");
-                before(info);
-            }));
-        });
-    }
-}
+/// The desktop owns its logger; retained for callers that warm the GPU independently.
+pub(crate) fn start_log() {}
 
 /// The backend to start from: the next one after a try that never finished (see the module's
 /// note), else the one used last.
@@ -158,10 +135,10 @@ pub(crate) fn made_on(backend: usize) {
 /// A canvas is about to show on the app's device: until it has ([`Showing::shown`]), a crash
 /// counts against the device's backend. The try ends when this is dropped (unless panicking,
 /// which counts against it too).
-#[cfg_attr(not(any(target_os = "android", target_os = "ios")), allow(dead_code))]
+#[allow(dead_code)]
 pub(crate) struct Showing(Option<usize>);
 
-#[cfg_attr(not(any(target_os = "android", target_os = "ios")), allow(dead_code))]
+#[allow(dead_code)]
 impl Showing {
     pub(crate) fn begin() -> Showing {
         let backend = BACKEND.load(Ordering::Relaxed);

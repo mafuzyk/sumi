@@ -27,7 +27,7 @@ use sumi_gpu::{
 };
 
 use crate::project::{THUMBNAIL_SIDE, file_error, pixels_hash, read_png, write_atomically, write_png};
-use crate::{CanvasSession, MobileError, PenSample, PointerKind, State, ToolKind};
+use crate::{CanvasError, CanvasSession, PenSample, PointerKind, State, ToolKind};
 
 /// How far a one-finger drag turns the model: this many radians across the window's shorter
 /// side, wherever the finger is and however fast it goes (measured: 0.0122 rad a point on a 744
@@ -222,7 +222,7 @@ pub(crate) struct ModelSource {
 }
 
 /// A feature of a model that painting on it may not go well with.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ModelWarning {
     /// Texels several surfaces share: paint on one shows on the others.
     OverlappingUvs,
@@ -246,7 +246,7 @@ fn warnings_of(mesh: &Mesh) -> Vec<ModelWarning> {
 }
 
 /// A file picked along with a model: an OBJ's material file, or an image its materials map.
-#[derive(Clone, Debug, uniffi::Record)]
+#[derive(Clone, Debug)]
 pub struct ModelFile {
     pub name: String,
     pub bytes: Vec<u8>,
@@ -394,7 +394,6 @@ fn clean_writes(files: &[PathBuf], dirs: &[PathBuf]) {
 
 /// Unpacks a model's artwork (see [`CanvasSession::export_model_artwork`]) from file `path` into
 /// the empty folder `dir`: false, with nothing kept, if it isn't one. Nothing goes outside `dir`.
-#[uniffi::export]
 pub fn unpack_model_artwork(path: String, dir: String) -> bool {
     let Ok(bytes) = fs::read(&path) else { return false };
     let Some(zip) = sumi_engine::zip::ZipReader::new(&bytes) else { return false };
@@ -437,7 +436,6 @@ pub fn unpack_model_artwork(path: String, dir: String) -> bool {
 
 /// The model a zip of one holds (its path in the zip), as the gallery's Import opens it; none if
 /// it holds none or is an artwork, a layered package or brushes.
-#[uniffi::export]
 pub fn zip_model_name(bytes: Vec<u8>) -> Option<String> {
     zipped_model_name(&sumi_engine::zip::ZipReader::new(&bytes)?)
 }
@@ -1019,21 +1017,19 @@ impl Scene {
     }
 }
 
-#[uniffi::export]
 impl CanvasSession {
     /// Opens a model to paint on: `file` the model file named `file_name` (OBJ, USDZ or USDC, by
     /// its extension), with the `files` picked along with it (an OBJ's material file and the
     /// images it maps). A zip (`.zip`) brings the model and those files in one: as a folder
     /// holding them, its model the one nearest its top. Each texture set is `texture_size` pixels
     /// square (0: the default).
-    #[uniffi::constructor]
     pub fn open_model(
         file: Vec<u8>,
         file_name: String,
         files: Vec<ModelFile>,
         name: String,
         texture_size: u32,
-    ) -> Result<Arc<CanvasSession>, MobileError> {
+    ) -> Result<Arc<CanvasSession>, CanvasError> {
         let (file, file_name, files) = if extension_of(&file_name) == "zip" {
             let zipped = unzip_model(&file).ok_or_else(|| file_error("opening the model", "no model in the zip"))?;
             let mut all = zipped.files;
@@ -1880,12 +1876,11 @@ impl CanvasSession {
     }
 }
 
-#[uniffi::export]
 impl CanvasSession {
     /// Writes the model as OBJ into a zip at `path`: the model, its material file, and each
     /// texture set's picture as a PNG (over the part's base colour, white), named after the
     /// artwork.
-    pub fn export_model_obj(&self, path: String) -> Result<(), MobileError> {
+    pub fn export_model_obj(&self, path: String) -> Result<(), CanvasError> {
         let files = self.model_files()?;
         let base = &files.base;
         let materials: Vec<(&str, &PartImages)> = files.names.iter().map(String::as_str).zip(&files.images).collect();
@@ -1905,7 +1900,7 @@ impl CanvasSession {
     /// The artwork, saved to `dir` first, as one file at `path` that comes back whole in another
     /// copy of the app: its folder zipped, the model, every texture set's layers and how it was
     /// seen.
-    pub fn export_model_artwork(&self, dir: String, path: String) -> Result<(), MobileError> {
+    pub fn export_model_artwork(&self, dir: String, path: String) -> Result<(), CanvasError> {
         self.save(dir.clone())?;
         let root = Path::new(&dir);
         let mut zip = sumi_engine::zip::ZipWriter::new();
@@ -1917,7 +1912,7 @@ impl CanvasSession {
     /// Writes the model as a glTF binary at `path`, for a viewer that shows it in the room: as
     /// for [`CanvasSession::export_model_usdz`], each set's roughness and metalness in one image
     /// (green and blue).
-    pub fn export_model_glb(&self, path: String) -> Result<(), MobileError> {
+    pub fn export_model_glb(&self, path: String) -> Result<(), CanvasError> {
         let ModelPixels { mesh, names, pixels, maps, side, .. } = self.model_pixels()?;
         let png = |px: &[u8]| crate::project::rgba_png(side, side, px);
         let encoded: Vec<[Vec<u8>; 4]> = pixels
@@ -1950,19 +1945,18 @@ impl CanvasSession {
 
     /// Writes the model as a USDZ package at `path`: the mesh with a preview-surface material
     /// for each texture set, reading its images (as for [`CanvasSession::export_model_obj`]).
-    pub fn export_model_usdz(&self, path: String) -> Result<(), MobileError> {
+    pub fn export_model_usdz(&self, path: String) -> Result<(), CanvasError> {
         let files = self.model_files()?;
         let bytes = sumi_engine::usd::write_usdz(&files.mesh, &files.images);
         write_atomically(Path::new(&path), |p| fs::write(p, &bytes).map_err(|e| file_error("exporting the model", e)))
     }
 }
 
-#[uniffi::export]
 impl CanvasSession {
     /// Each texture set's colour, roughness and metalness (and its normal and occlusion maps, if
     /// it has them) as PNGs in folder `dir` (made if missing; as for
     /// [`CanvasSession::export_model_obj`]); returns the files' paths.
-    pub fn export_model_textures(&self, dir: String) -> Result<Vec<String>, MobileError> {
+    pub fn export_model_textures(&self, dir: String) -> Result<Vec<String>, CanvasError> {
         let files = self.model_files()?;
         let dir = Path::new(&dir);
         fs::create_dir_all(dir).map_err(|e| file_error("making the folder", e))?;
@@ -1984,14 +1978,14 @@ impl CanvasSession {
 
     /// The model as the window shows it, at the window's size, as a PNG at `path`: on the
     /// canvas's surround, or with `transparent`, on nothing.
-    pub fn export_model_render(&self, path: String, transparent: bool) -> Result<(), MobileError> {
+    pub fn export_model_render(&self, path: String, transparent: bool) -> Result<(), CanvasError> {
         let (w, h, rgba) = self.model_picture(transparent)?;
         let png = crate::project::rgba_png(w, h, &rgba);
         write_atomically(Path::new(&path), |p| fs::write(p, &png).map_err(|e| file_error("rendering the model", e)))
     }
 
     /// The model as the window shows it, on the canvas's surround, as a JPEG at `path`.
-    pub fn export_model_jpeg(&self, path: String) -> Result<(), MobileError> {
+    pub fn export_model_jpeg(&self, path: String) -> Result<(), CanvasError> {
         let (w, h, rgba) = self.model_picture(false)?;
         let rgb = crate::project::onto_white(&crate::project::straight_alpha(&rgba));
         let bytes = sumi_engine::jpeg::encode(&rgb, w, h, crate::project::JPEG_QUALITY);
@@ -1999,7 +1993,7 @@ impl CanvasSession {
     }
 
     /// The model as the window shows it, on the canvas's surround, as a TIFF at `path`.
-    pub fn export_model_tiff(&self, path: String) -> Result<(), MobileError> {
+    pub fn export_model_tiff(&self, path: String) -> Result<(), CanvasError> {
         let (w, h, rgba) = self.model_picture(false)?;
         let bytes = sumi_engine::formats::tiff(w, h, 72.0, &[], &rgba);
         write_atomically(Path::new(&path), |p| fs::write(p, &bytes).map_err(|e| file_error("rendering the model", e)))
@@ -2009,7 +2003,7 @@ impl CanvasSession {
 impl CanvasSession {
     /// The model as the window shows it, at the window's size: its width, height and pixels
     /// (premultiplied RGBA8), on the canvas's surround or, `transparent`, on nothing.
-    fn model_picture(&self, transparent: bool) -> Result<(u32, u32, Vec<u8>), MobileError> {
+    fn model_picture(&self, transparent: bool) -> Result<(u32, u32, Vec<u8>), CanvasError> {
         let mut guard = self.shared.lock();
         let st = &mut *guard;
         st.finish_stroke();
@@ -2037,7 +2031,7 @@ const TURNTABLE_PULL: f32 = 0.65;
 /// How a model's turntable goes: once round (or swinging each way and back) every `seconds`,
 /// the camera pulled back by up to `zoom` (0 to 1) half way through, the turn eased in and out at
 /// the loop by `ease` (0 to 1), the environment behind it or not.
-#[derive(Clone, Copy, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Turntable {
     pub swing: bool,
     pub seconds: f32,
@@ -2061,7 +2055,6 @@ impl Turntable {
     }
 }
 
-#[uniffi::export]
 impl CanvasSession {
     /// Frame `index` of `count` of the model's turntable as `turntable` sets it, at `width` ×
     /// `height`: RGBA8, or with `bgra` opaque blue, green, red, alpha (an ARGB integer each,
@@ -2109,7 +2102,7 @@ impl CanvasSession {
         width: u32,
         height: u32,
         fps: f32,
-    ) -> Result<(), MobileError> {
+    ) -> Result<(), CanvasError> {
         let count = turntable_frames(turntable, fps);
         let delay = (100.0 / fps.clamp(1.0, 100.0)).round() as u16;
         let mut gif: Option<sumi_engine::formats::GifWriter> = None;
@@ -2140,7 +2133,7 @@ impl CanvasSession {
         width: u32,
         height: u32,
         fps: f32,
-    ) -> Result<(), MobileError> {
+    ) -> Result<(), CanvasError> {
         let count = turntable_frames(turntable, fps);
         let delay = (1000.0 / fps.clamp(1.0, 1000.0)).round().clamp(1.0, 65535.0) as u16;
         let (w, h) = (width.max(1), height.max(1));
@@ -2193,7 +2186,7 @@ impl CanvasSession {
     /// The model's texture sets' pixels as exports take them: each set's colour, roughness and
     /// metalness over the part's own (RGBA8, the texture size square), with its maps and the
     /// sets' names safe as file names.
-    fn model_pixels(&self) -> Result<ModelPixels, MobileError> {
+    fn model_pixels(&self) -> Result<ModelPixels, CanvasError> {
         let (mesh, set_names, pictures, maps, side, base) = {
             let mut guard = self.shared.lock();
             let st = &mut *guard;
@@ -2227,7 +2220,7 @@ impl CanvasSession {
         Ok(ModelPixels { mesh, names, pixels, maps, side, base })
     }
 
-    fn model_files(&self) -> Result<ModelFiles, MobileError> {
+    fn model_files(&self) -> Result<ModelFiles, CanvasError> {
         let ModelPixels { mesh, names, pixels, maps, side, base } = self.model_pixels()?;
         let png = |px: &[u8]| crate::project::rgba_png(side, side, px);
         let images = pixels
@@ -2308,7 +2301,7 @@ fn file_stem(name: &str, otherwise: &str) -> String {
 impl State {
     /// Each texture set's colour, roughness and metalness as painted (premultiplied RGBA8, the
     /// texture size square), drawn now: none for a channel never painted.
-    fn channel_pictures(&mut self) -> Result<Vec<[Option<Vec<u8>>; 3]>, MobileError> {
+    fn channel_pictures(&mut self) -> Result<Vec<[Option<Vec<u8>>; 3]>, CanvasError> {
         let failed = |e: String| file_error("reading the model's textures", e);
         let gpu = self.gpu.as_ref().ok_or_else(|| failed("the model is not shown yet".to_owned()))?;
         let Some(scene) = self.scene.as_mut() else { return Ok(Vec::new()) };
@@ -2471,7 +2464,7 @@ pub(crate) struct ModelSnapshot {
 pub(crate) type SavedSets = HashMap<(usize, usize, LayerId), u64>;
 
 /// A waiting texture set's layers' pixels: read from its canvas, or as opened if not drawn yet.
-fn set_pixels(set: &mut TextureSet, gpu: Option<&sumi_gpu::Gpu>) -> Result<Pixels, MobileError> {
+fn set_pixels(set: &mut TextureSet, gpu: Option<&sumi_gpu::Gpu>) -> Result<Pixels, CanvasError> {
     match (set.canvas.as_mut(), gpu) {
         (Some(canvas), Some(gpu)) => {
             canvas.render(gpu, &mut set.doc, None);
@@ -2489,7 +2482,7 @@ fn set_pixels(set: &mut TextureSet, gpu: Option<&sumi_gpu::Gpu>) -> Result<Pixel
 
 impl State {
     /// The model's part of a save, if this is a model.
-    pub(crate) fn model_snapshot(&mut self) -> Result<Option<ModelSnapshot>, MobileError> {
+    pub(crate) fn model_snapshot(&mut self) -> Result<Option<ModelSnapshot>, CanvasError> {
         let (Some(scene), gpu) = (self.scene.as_mut(), self.gpu.as_ref()) else { return Ok(None) };
         let mut docs = Vec::new();
         let mut layers = Vec::new();
@@ -2569,7 +2562,7 @@ impl State {
 
 /// Writes a model's files into its artwork folder `dir`: the model (once), and the waiting texture
 /// sets' layers that changed since the last save there.
-pub(crate) fn write_model(saved: &mut SavedSets, dir: &Path, model: &ModelSnapshot) -> Result<(), MobileError> {
+pub(crate) fn write_model(saved: &mut SavedSets, dir: &Path, model: &ModelSnapshot) -> Result<(), CanvasError> {
     let file = dir.join(format!("model.{}", model.source.extension));
     if !file.exists() {
         write_atomically(&file, |p| fs::write(p, &model.source.bytes).map_err(|e| file_error("saving the model", e)))?;
@@ -2649,7 +2642,7 @@ fn read_set_layers(folder: &Path, doc: &Document, side: u32) -> Pixels {
 }
 
 /// The model saved in the artwork folder `dir`, as `saved` describes it.
-pub(crate) fn open_saved_model(dir: &Path, saved: &SavedModel) -> Result<Scene, MobileError> {
+pub(crate) fn open_saved_model(dir: &Path, saved: &SavedModel) -> Result<Scene, CanvasError> {
     let extension = extension_of(&format!("model.{}", saved.extension));
     let bytes = fs::read(dir.join(format!("model.{extension}"))).map_err(|e| file_error("opening the model", e))?;
     let mtl = fs::read_to_string(dir.join("model.mtl")).ok();
@@ -3555,7 +3548,7 @@ impl State {
 
     /// Draws a frame of the model into `target` (the window's size): the stroke carried onto it,
     /// the current texture set composited, the model drawn with each set showing.
-    #[cfg_attr(not(any(target_os = "android", test)), allow(dead_code))]
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn render_scene(
         &mut self,
         target: &wgpu::TextureView,
@@ -3766,7 +3759,7 @@ fn bounds_of(stamps: &[sumi_engine::stroke::Stamp]) -> IRect {
 /// A light on the model as the interface sets it: its place (in the framing's units from the
 /// model's middle: x right, y up, z toward the front), its hue (a place along the hue bar, 0 to 1),
 /// how much of that colour it has (0 white, 1 the hue's own), and its intensity (0 to 1).
-#[derive(Clone, Copy, Debug, PartialEq, uniffi::Record, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ModelLight {
     pub x: f32,
     pub y: f32,
@@ -3858,7 +3851,7 @@ impl LightsView<'_> {
 }
 
 /// A model and its texture sets, as the interface sees them.
-#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ModelInfo {
     pub texture_sets: Vec<String>,
     pub triangles: u32,
@@ -3869,7 +3862,7 @@ pub struct ModelInfo {
 }
 
 /// A texture set's share of a model's layers, as Canvas information lists it.
-#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct TextureSetStats {
     pub name: String,
     /// Its layers with pixels, and how many it can hold.
@@ -3880,7 +3873,7 @@ pub struct TextureSetStats {
 /// An image a model's file brings for a texture set's channel (0 colour, 1 roughness, 2
 /// metalness, 3 its normal map, 4 its occlusion): its file's bytes, and which of its components
 /// to take (-1: as it is, or its grey).
-#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ModelTextureFile {
     pub texture_set: u32,
     pub channel: u32,
@@ -3889,7 +3882,7 @@ pub struct ModelTextureFile {
 }
 
 /// One of a model's meshes: its name and the texture set it is painted in.
-#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SubmeshInfo {
     pub name: String,
     pub texture_set: u32,
@@ -3912,7 +3905,6 @@ impl ModelInfo {
 }
 
 /// What each warning is called, as a list in a dialog shows it.
-#[uniffi::export]
 pub fn model_warning_name(warning: ModelWarning) -> String {
     match warning {
         ModelWarning::OverlappingUvs => "Overlapping UV Coordinates",

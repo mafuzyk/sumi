@@ -488,36 +488,6 @@ https://github.com/ash-rs/ash
     IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
     DEALINGS IN THE SOFTWARE.
 
-askama 0.16.1 (MIT OR Apache-2.0)
-https://github.com/askama-rs/askama
-  LICENSE-APACHE: the Apache License 2.0 (its text at the end)
-  LICENSE-MIT:
-    Copyright (c) 2017-2020 Dirkjan Ochtman
-    
-    Permission is hereby granted, free of charge, to any
-    person obtaining a copy of this software and associated
-    documentation files (the "Software"), to deal in the
-    Software without restriction, including without
-    limitation the rights to use, copy, modify, merge,
-    publish, distribute, sublicense, and/or sell copies of
-    the Software, and to permit persons to whom the Software
-    is furnished to do so, subject to the following
-    conditions:
-    
-    The above copyright notice and this permission notice
-    shall be included in all copies or substantial portions
-    of the Software.
-    
-    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
-    ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-    TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-    PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-    SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-    CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-    OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-    IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-    DEALINGS IN THE SOFTWARE.
-
 base64 0.23.1 (MIT OR Apache-2.0)
 https://github.com/marshallpierce/rust-base64
   LICENSE-APACHE: the Apache License 2.0 (its text at the end)
@@ -937,89 +907,6 @@ https://github.com/smithay/calloop-wayland-source
     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
     THE SOFTWARE.
 
-camino 1.2.6 (MIT OR Apache-2.0)
-https://github.com/camino-rs/camino
-  LICENSE-APACHE: the Apache License 2.0 (its text at the end)
-  LICENSE-MIT:
-    Permission is hereby granted, free of charge, to any
-    person obtaining a copy of this software and associated
-    documentation files (the "Software"), to deal in the
-    Software without restriction, including without
-    limitation the rights to use, copy, modify, merge,
-    publish, distribute, sublicense, and/or sell copies of
-    the Software, and to permit persons to whom the Software
-    is furnished to do so, subject to the following
-    conditions:
-    
-    The above copyright notice and this permission notice
-    shall be included in all copies or substantial portions
-    of the Software.
-    
-    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
-    ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-    TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-    PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-    SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-    CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-    OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-    IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-    DEALINGS IN THE SOFTWARE.
-
-cargo-platform 0.3.3 (MIT OR Apache-2.0)
-https://github.com/rust-lang/cargo
-  LICENSE-APACHE: the Apache License 2.0 (its text at the end)
-  LICENSE-MIT:
-    Permission is hereby granted, free of charge, to any
-    person obtaining a copy of this software and associated
-    documentation files (the "Software"), to deal in the
-    Software without restriction, including without
-    limitation the rights to use, copy, modify, merge,
-    publish, distribute, sublicense, and/or sell copies of
-    the Software, and to permit persons to whom the Software
-    is furnished to do so, subject to the following
-    conditions:
-    
-    The above copyright notice and this permission notice
-    shall be included in all copies or substantial portions
-    of the Software.
-    
-    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
-    ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-    TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-    PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-    SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-    CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-    OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-    IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-    DEALINGS IN THE SOFTWARE.
-
-cargo_metadata 0.23.1 (MIT)
-https://github.com/oli-obk/cargo_metadata
-  LICENSE-MIT:
-    Permission is hereby granted, free of charge, to any
-    person obtaining a copy of this software and associated
-    documentation files (the "Software"), to deal in the
-    Software without restriction, including without
-    limitation the rights to use, copy, modify, merge,
-    publish, distribute, sublicense, and/or sell copies of
-    the Software, and to permit persons to whom the Software
-    is furnished to do so, subject to the following
-    conditions:
-    
-    The above copyright notice and this permission notice
-    shall be included in all copies or substantial portions
-    of the Software.
-    
-    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
-    ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-    TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-    PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-    SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-    CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-    OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-    IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-    DEALINGS IN THE SOFTWARE.
-
 cfg-if 1.0.5 (MIT OR Apache-2.0)
 https://github.com/rust-lang/cfg-if
   LICENSE-APACHE: the Apache License 2.0 (its text at the end)
@@ -1292,78 +1179,6 @@ https://github.com/chronotope/chrono
     See the License for the specific language governing permissions and
     limitations under the License.
     ~~~~
-
-clap 4.6.7 (MIT OR Apache-2.0)
-https://github.com/clap-rs/clap
-  LICENSE-APACHE: the Apache License 2.0 (its text at the end)
-  LICENSE-MIT:
-    Copyright (c) Individual contributors
-    
-    Permission is hereby granted, free of charge, to any person obtaining a copy
-    of this software and associated documentation files (the "Software"), to deal
-    in the Software without restriction, including without limitation the rights
-    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-    copies of the Software, and to permit persons to whom the Software is
-    furnished to do so, subject to the following conditions:
-    
-    The above copyright notice and this permission notice shall be included in all
-    copies or substantial portions of the Software.
-    
-    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-    SOFTWARE.
-
-clap_builder 4.6.7 (MIT OR Apache-2.0)
-https://github.com/clap-rs/clap
-  LICENSE-APACHE: the Apache License 2.0 (its text at the end)
-  LICENSE-MIT:
-    Copyright (c) Individual contributors
-    
-    Permission is hereby granted, free of charge, to any person obtaining a copy
-    of this software and associated documentation files (the "Software"), to deal
-    in the Software without restriction, including without limitation the rights
-    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-    copies of the Software, and to permit persons to whom the Software is
-    furnished to do so, subject to the following conditions:
-    
-    The above copyright notice and this permission notice shall be included in all
-    copies or substantial portions of the Software.
-    
-    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-    SOFTWARE.
-
-clap_lex 1.1.1 (MIT OR Apache-2.0)
-https://github.com/clap-rs/clap
-  LICENSE-APACHE: the Apache License 2.0 (its text at the end)
-  LICENSE-MIT:
-    Copyright (c) Individual contributors
-    
-    Permission is hereby granted, free of charge, to any person obtaining a copy
-    of this software and associated documentation files (the "Software"), to deal
-    in the Software without restriction, including without limitation the rights
-    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-    copies of the Software, and to permit persons to whom the Software is
-    furnished to do so, subject to the following conditions:
-    
-    The above copyright notice and this permission notice shall be included in all
-    copies or substantial portions of the Software.
-    
-    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-    SOFTWARE.
 
 clip-core 0.1.0 (GPL-3.0-or-later)
   LICENSE:
@@ -3593,34 +3408,6 @@ https://github.com/servo/rust-url
     IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
     DEALINGS IN THE SOFTWARE.
 
-fs-err 3.3.2 (MIT OR Apache-2.0)
-https://github.com/andrewhickman/fs-err
-  LICENSE-APACHE: the Apache License 2.0 (its text at the end)
-  LICENSE-MIT:
-    Permission is hereby granted, free of charge, to any
-    person obtaining a copy of this software and associated
-    documentation files (the "Software"), to deal in the
-    Software without restriction, including without
-    limitation the rights to use, copy, modify, merge,
-    publish, distribute, sublicense, and/or sell copies of
-    the Software, and to permit persons to whom the Software
-    is furnished to do so, subject to the following
-    conditions:
-    
-    The above copyright notice and this permission notice
-    shall be included in all copies or substantial portions
-    of the Software.
-    
-    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
-    ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-    TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-    PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-    SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-    CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-    OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-    IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-    DEALINGS IN THE SOFTWARE.
-
 gethostname 1.1.0 (Apache-2.0)
 https://codeberg.org/swsnr/gethostname.rs.git
   LICENSE: the Apache License 2.0 (its text at the end)
@@ -3743,36 +3530,6 @@ https://github.com/linebender/vello
     IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
     DEALINGS IN THE SOFTWARE.
 
-glob 0.3.4 (MIT OR Apache-2.0)
-https://github.com/rust-lang/glob
-  LICENSE-APACHE: the Apache License 2.0 (its text at the end)
-  LICENSE-MIT:
-    Copyright (c) 2014 The Rust Project Developers
-    
-    Permission is hereby granted, free of charge, to any
-    person obtaining a copy of this software and associated
-    documentation files (the "Software"), to deal in the
-    Software without restriction, including without
-    limitation the rights to use, copy, modify, merge,
-    publish, distribute, sublicense, and/or sell copies of
-    the Software, and to permit persons to whom the Software
-    is furnished to do so, subject to the following
-    conditions:
-    
-    The above copyright notice and this permission notice
-    shall be included in all copies or substantial portions
-    of the Software.
-    
-    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
-    ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-    TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-    PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-    SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-    CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-    OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-    IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-    DEALINGS IN THE SOFTWARE.
-
 glow 0.17.0 (MIT OR Apache-2.0 OR Zlib)
 https://github.com/grovesNL/glow
   LICENSE-APACHE: the Apache License 2.0 (its text at the end)
@@ -3820,31 +3577,6 @@ https://github.com/grovesNL/glow
 glutin_wgl_sys 0.6.1 (Apache-2.0)
 https://github.com/rust-windowing/glutin
   LICENSE: the Apache License 2.0 (its text at the end)
-
-goblin 0.8.2 (MIT)
-https://github.com/m4b/goblin
-  LICENSE:
-    The MIT License (MIT)
-    
-    Copyright (c) m4b 2016-2024
-    
-    Permission is hereby granted, free of charge, to any person obtaining a copy
-    of this software and associated documentation files (the "Software"), to deal
-    in the Software without restriction, including without limitation the rights
-    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-    copies of the Software, and to permit persons to whom the Software is
-    furnished to do so, subject to the following conditions:
-    
-    The above copyright notice and this permission notice shall be included in all
-    copies or substantial portions of the Software.
-    
-    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-    SOFTWARE.
 
 gpu-allocator 0.28.0 (MIT OR Apache-2.0)
 https://github.com/Traverse-Research/gpu-allocator
@@ -5485,72 +5217,6 @@ https://github.com/RazrFalcon/memmap2-rs
     OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
     IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
     DEALINGS IN THE SOFTWARE.
-
-minimal-lexical 0.2.1 (MIT/Apache-2.0)
-https://github.com/Alexhuszagh/minimal-lexical
-  LICENSE-APACHE: the Apache License 2.0 (its text at the end)
-  LICENSE-MIT:
-    Permission is hereby granted, free of charge, to any
-    person obtaining a copy of this software and associated
-    documentation files (the "Software"), to deal in the
-    Software without restriction, including without
-    limitation the rights to use, copy, modify, merge,
-    publish, distribute, sublicense, and/or sell copies of
-    the Software, and to permit persons to whom the Software
-    is furnished to do so, subject to the following
-    conditions:
-    
-    The above copyright notice and this permission notice
-    shall be included in all copies or substantial portions
-    of the Software.
-    
-    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
-    ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-    TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-    PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-    SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-    CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-    OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-    IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-    DEALINGS IN THE SOFTWARE.
-  LICENSE.md:
-    Minimal-lexical is dual licensed under the Apache 2.0 license as well as the MIT
-    license. See the LICENCE-MIT and the LICENCE-APACHE files for the licenses.
-    
-    ---
-    
-    `src/bellerophon.rs` is loosely based off the Golang implementation,
-    found [here](https://github.com/golang/go/blob/b10849fbb97a2244c086991b4623ae9f32c212d0/src/strconv/extfloat.go).
-    That code (used if the `compact` feature is enabled) is subject to a
-    [3-clause BSD license](https://github.com/golang/go/blob/b10849fbb97a2244c086991b4623ae9f32c212d0/LICENSE):
-    
-    Copyright (c) 2009 The Go Authors. All rights reserved.
-    
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are
-    met:
-    
-       * Redistributions of source code must retain the above copyright
-    notice, this list of conditions and the following disclaimer.
-       * Redistributions in binary form must reproduce the above
-    copyright notice, this list of conditions and the following disclaimer
-    in the documentation and/or other materials provided with the
-    distribution.
-       * Neither the name of Google Inc. nor the names of its
-    contributors may be used to endorse or promote products derived from
-    this software without specific prior written permission.
-    
-    THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-    "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-    LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-    A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-    OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-    SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-    LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-    DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-    THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-    OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 miniz_oxide 0.8.9 (MIT OR Zlib OR Apache-2.0)
 https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide
@@ -7508,31 +7174,6 @@ https://github.com/bluss/scopeguard
     IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
     DEALINGS IN THE SOFTWARE.
 
-scroll 0.12.0 (MIT)
-https://github.com/m4b/scroll
-  LICENSE:
-    The MIT License (MIT)
-    
-    Copyright (c) m4b 2016
-    
-    Permission is hereby granted, free of charge, to any person obtaining a copy
-    of this software and associated documentation files (the "Software"), to deal
-    in the Software without restriction, including without limitation the rights
-    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-    copies of the Software, and to permit persons to whom the Software is
-    furnished to do so, subject to the following conditions:
-    
-    The above copyright notice and this permission notice shall be included in all
-    copies or substantial portions of the Software.
-    
-    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-    SOFTWARE.
-
 sctk-adwaita 0.10.1 (MIT)
 https://github.com/PolyMeilex/sctk-adwaita
   LICENSE:
@@ -8254,31 +7895,6 @@ https://github.com/servo/rust-smallvec
     IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
     DEALINGS IN THE SOFTWARE.
 
-smawk 0.3.3 (MIT)
-https://github.com/mgeisler/smawk
-  LICENSE:
-    MIT License
-    
-    Copyright (c) 2017 Martin Geisler
-    
-    Permission is hereby granted, free of charge, to any person obtaining a copy
-    of this software and associated documentation files (the "Software"), to deal
-    in the Software without restriction, including without limitation the rights
-    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-    copies of the Software, and to permit persons to whom the Software is
-    furnished to do so, subject to the following conditions:
-    
-    The above copyright notice and this permission notice shall be included in all
-    copies or substantial portions of the Software.
-    
-    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-    SOFTWARE.
-
 smithay-client-toolkit 0.19.2 (MIT)
 https://github.com/smithay/client-toolkit
   LICENSE.txt:
@@ -8538,33 +8154,6 @@ https://github.com/robbepop/string-interner
     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
     SOFTWARE.
 
-strsim 0.11.1 (MIT)
-https://github.com/rapidfuzz/strsim-rs
-  LICENSE:
-    The MIT License (MIT)
-    
-    Copyright (c) 2015 Danny Guo
-    Copyright (c) 2016 Titus Wormer <tituswormer@gmail.com>
-    Copyright (c) 2018 Akash Kurdekar
-    
-    Permission is hereby granted, free of charge, to any person obtaining a copy
-    of this software and associated documentation files (the "Software"), to deal
-    in the Software without restriction, including without limitation the rights
-    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-    copies of the Software, and to permit persons to whom the Software is
-    furnished to do so, subject to the following conditions:
-    
-    The above copyright notice and this permission notice shall be included in all
-    copies or substantial portions of the Software.
-    
-    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-    SOFTWARE.
-
 svgtypes 0.16.1 (Apache-2.0 OR MIT)
 https://github.com/linebender/svgtypes
   LICENSE-APACHE: the Apache License 2.0 (its text at the end)
@@ -8728,31 +8317,6 @@ https://github.com/BurntSushi/termcolor
     OTHER DEALINGS IN THE SOFTWARE.
     
     For more information, please refer to <http://unlicense.org/>
-
-textwrap 0.16.4 (MIT)
-https://github.com/mgeisler/textwrap
-  LICENSE:
-    MIT License
-    
-    Copyright (c) 2016 Martin Geisler
-    
-    Permission is hereby granted, free of charge, to any person obtaining a copy
-    of this software and associated documentation files (the "Software"), to deal
-    in the Software without restriction, including without limitation the rights
-    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-    copies of the Software, and to permit persons to whom the Software is
-    furnished to do so, subject to the following conditions:
-    
-    The above copyright notice and this permission notice shall be included in all
-    copies or substantial portions of the Software.
-    
-    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-    SOFTWARE.
 
 thiserror 1.0.69 (MIT OR Apache-2.0)
 https://github.com/dtolnay/thiserror
@@ -9636,30 +9200,6 @@ https://github.com/unicode-rs/unicode-width
     IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
     DEALINGS IN THE SOFTWARE.
 
-uniffi 0.32.2 (MPL-2.0)
-https://github.com/mozilla/uniffi-rs
-  (no licence file in the package) used under the Mozilla Public License 2.0 (its text at the end)
-
-uniffi_bindgen 0.32.2 (MPL-2.0)
-https://github.com/mozilla/uniffi-rs
-  (no licence file in the package) used under the Mozilla Public License 2.0 (its text at the end)
-
-uniffi_core 0.32.2 (MPL-2.0)
-https://github.com/mozilla/uniffi-rs
-  (no licence file in the package) used under the Mozilla Public License 2.0 (its text at the end)
-
-uniffi_meta 0.32.2 (MPL-2.0)
-https://github.com/mozilla/uniffi-rs
-  (no licence file in the package) used under the Mozilla Public License 2.0 (its text at the end)
-
-uniffi_pipeline 0.32.2 (MPL-2.0)
-https://github.com/mozilla/uniffi-rs
-  (no licence file in the package) used under the Mozilla Public License 2.0 (its text at the end)
-
-uniffi_udl 0.32.2 (MPL-2.0)
-https://github.com/mozilla/uniffi-rs
-  (no licence file in the package) used under the Mozilla Public License 2.0 (its text at the end)
-
 url 2.5.8 (MIT OR Apache-2.0)
 https://github.com/servo/rust-url
   LICENSE-APACHE: the Apache License 2.0 (its text at the end)
@@ -10177,26 +9717,6 @@ https://github.com/amodm/webbrowser-rs
     CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
     OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
     IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-    DEALINGS IN THE SOFTWARE.
-
-weedle2 5.0.0 (MIT)
-https://github.com/mozilla/uniffi-rs
-  LICENSE.md:
-    Copyright 2018-Present Sharad Chand
-    Copyright 2022 Jan-Erik Rediger
-    
-    Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
-    documentation files (the "Software"), to deal in the Software without restriction, including without limitation
-    the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software,
-    and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
-    
-    The above copyright notice and this permission notice shall be included in all copies or substantial portions
-    of the Software.
-    
-    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-    TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-    THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
-    CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
     DEALINGS IN THE SOFTWARE.
 
 weezl 0.1.12 (MIT OR Apache-2.0)

@@ -12,7 +12,7 @@ pub const P3: &str = "Display P3";
 /// A canvas to start from: its size in `unit` ("px", "mm", "cm" or "in"), DPI, background
 /// (0xRRGGBB, and whether it is hidden), time-lapse video (resolution 0..2 for 1080p, 2K and 4K;
 /// quality 0..3; HEVC) and colour profile, by name.
-#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct CanvasPreset {
     pub name: String,
     pub unit: String,
@@ -87,7 +87,6 @@ impl CanvasPreset {
 }
 
 /// How many of `unit` make an inch; none for pixels.
-#[uniffi::export]
 pub fn per_inch(unit: String) -> Option<f32> {
     match unit.as_str() {
         "mm" => Some(25.4),
@@ -98,7 +97,6 @@ pub fn per_inch(unit: String) -> Option<f32> {
 }
 
 /// `v` with at most two decimals and no trailing zeros.
-#[uniffi::export]
 pub fn preset_number(v: f32) -> String {
     // halves round up, as the apps have always shown them
     let v = (v * 100.0).round() / 100.0;
@@ -106,18 +104,15 @@ pub fn preset_number(v: f32) -> String {
 }
 
 /// The preset's width in pixels (1 to [`MAX_SIDE`]).
-#[uniffi::export]
 pub fn preset_width(preset: CanvasPreset) -> u32 {
     preset.pixels(preset.size_width)
 }
 
-#[uniffi::export]
 pub fn preset_height(preset: CanvasPreset) -> u32 {
     preset.pixels(preset.size_height)
 }
 
 /// The size as the list shows it, in its unit.
-#[uniffi::export]
 pub fn preset_label(preset: CanvasPreset) -> String {
     let (w, h) = (preset_number(preset.size_width), preset_number(preset.size_height));
     if preset.unit == "in" {
@@ -128,7 +123,6 @@ pub fn preset_label(preset: CanvasPreset) -> String {
 }
 
 /// A colour profile as a list's chip shows it.
-#[uniffi::export]
 pub fn profile_chip(profile: String) -> String {
     if profile == P3 {
         "P3".into()
@@ -140,7 +134,6 @@ pub fn profile_chip(profile: String) -> String {
 }
 
 /// The presets a new gallery starts with.
-#[uniffi::export]
 pub fn standard_presets() -> Vec<CanvasPreset> {
     let comic = cmyk_profiles().into_iter().next().unwrap_or_else(|| SRGB.to_owned());
     vec![
@@ -156,7 +149,6 @@ pub fn standard_presets() -> Vec<CanvasPreset> {
 
 /// The presets kept as `saved` (a JSON array), or the standard ones if none were (or they can't
 /// be read).
-#[uniffi::export]
 pub fn presets_from_json(saved: Option<String>) -> Vec<CanvasPreset> {
     let read = saved.and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
     match read.as_ref().and_then(serde_json::Value::as_array) {
@@ -166,7 +158,6 @@ pub fn presets_from_json(saved: Option<String>) -> Vec<CanvasPreset> {
 }
 
 /// `presets` as kept: a JSON array.
-#[uniffi::export]
 pub fn presets_json(presets: Vec<CanvasPreset>) -> String {
     serde_json::Value::Array(presets.iter().map(CanvasPreset::to_json).collect()).to_string()
 }

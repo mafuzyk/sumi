@@ -3,7 +3,7 @@
 //! adjustments, Recolor and the rest alike. The platforms say what is open and end what this says.
 
 /// The modes that can be open on the canvas, each as the app shows it.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, uniffi::Record)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Modes {
     /// A snapped QuickShape being edited.
     pub quickshape: bool,
@@ -48,7 +48,7 @@ const NONE: Modes = Modes {
 };
 
 /// A button pressed that goes between modes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ModeButton {
     /// Paint, Smudge or Erase tapped.
     Tool,
@@ -74,7 +74,7 @@ pub enum ModeButton {
 /// What a press does with the modes open: the ones it ends first, keeping what they made, and
 /// whether it then does what it does (`goes_on`). Not going on, a tool tapped only picks its tool
 /// (its brushes don't open), and any other button only ends what it ended, or nothing.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, uniffi::Record)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ModeSwitch {
     pub end: Modes,
     pub goes_on: bool,
@@ -92,7 +92,6 @@ pub struct ModeSwitch {
 /// - hiding the interface is refused while transforming.
 ///
 /// A QuickShape being edited ends with every press but the interface's.
-#[uniffi::export]
 pub fn mode_switch(button: ModeButton, open: Modes) -> ModeSwitch {
     let shape = Modes { quickshape: true, ..NONE };
     let ends = |kept: Modes, goes_on: bool| ModeSwitch { end: open.but(kept), goes_on };

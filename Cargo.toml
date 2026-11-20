@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/engine", "crates/gpu", "crates/core", "crates/sumi-clip", "android/bindgen", "desktop"]
+members = ["crates/engine", "crates/gpu", "crates/core", "crates/sumi-clip", "desktop"]
 default-members = ["crates/engine", "crates/gpu", "crates/core", "crates/sumi-clip", "desktop"]
 # A path dependency that is its own workspace root, kept out of `--workspace`: its tests need
 # `samples/` and sibling crates that are not in this repository.
@@ -14,8 +14,7 @@ publish = false
 license = "GPL-3.0-or-later"
 
 [workspace.lints.rust]
-# `deny`, not `forbid`: the one place that talks to the platform (the Android bridge's surface
-# module) allows it locally.
+# Rust-only workspace: no FFI surface modules are compiled into the desktop app.
 unsafe_code = "deny"
 
 [workspace.lints.clippy]

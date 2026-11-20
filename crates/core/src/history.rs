@@ -7,14 +7,12 @@ use std::sync::{Arc, Mutex};
 /// How many colours the history keeps.
 pub const HISTORY_SIZE: usize = 10;
 
-#[derive(Default, uniffi::Object)]
+#[derive(Default)]
 pub struct ColourHistory {
     colours: Mutex<Vec<u32>>,
 }
 
-#[uniffi::export]
 impl ColourHistory {
-    #[uniffi::constructor]
     pub fn new() -> Arc<ColourHistory> {
         Arc::new(ColourHistory::default())
     }

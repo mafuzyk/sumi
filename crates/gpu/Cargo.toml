@@ -18,10 +18,6 @@ pollster = { workspace = true }
 log = { workspace = true }
 thiserror = { workspace = true }
 
-# OpenGL ES where a device's Vulkan is missing or can't make a device
-[target.'cfg(target_os = "android")'.dependencies]
-wgpu = { workspace = true, features = ["gles"] }
-
 # OpenGL on Windows where neither Vulkan nor Direct3D 12 makes a device (an older GPU or driver)
 [target.'cfg(windows)'.dependencies]
 wgpu = { workspace = true, features = ["gles"] }
@@ -30,6 +26,6 @@ wgpu = { workspace = true, features = ["gles"] }
 [target.'cfg(target_os = "linux")'.dependencies]
 wgpu = { workspace = true, features = ["gles"] }
 
-# Metal on Apple's systems (the iPad app's core, the Mac's desktop app)
-[target.'cfg(target_vendor = "apple")'.dependencies]
+# Metal on macOS
+[target.'cfg(target_os = "macos")'.dependencies]
 wgpu = { workspace = true, features = ["metal"] }

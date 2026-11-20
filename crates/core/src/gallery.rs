@@ -23,7 +23,7 @@ const SAVE_IN_FLIGHT_MS: i64 = 5_000;
 
 /// A saved artwork: its folder, its name and size, and when it was last changed (milliseconds
 /// since 1970).
-#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct GalleryArtwork {
     pub dir: String,
     pub name: String,
@@ -33,7 +33,7 @@ pub struct GalleryArtwork {
 }
 
 /// Something the gallery shows: an artwork, or a stack of them (in their own order).
-#[derive(Clone, Debug, PartialEq, uniffi::Enum)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum GalleryEntry {
     Artwork { artwork: GalleryArtwork },
     Stack { dir: String, name: String, artworks: Vec<GalleryArtwork> },
@@ -244,7 +244,7 @@ fn write_stack_name(dir: &Path, name: &str) {
 }
 
 /// The artworks in the app's own storage.
-#[derive(uniffi::Object)]
+
 pub struct ArtworkStore {
     root: PathBuf,
 }
@@ -360,10 +360,8 @@ impl ArtworkStore {
     }
 }
 
-#[uniffi::export]
 impl ArtworkStore {
     /// The artworks kept in `root` (made if it isn't there).
-    #[uniffi::constructor]
     pub fn open(root: String) -> Arc<ArtworkStore> {
         let root = PathBuf::from(root);
         let _ = fs::create_dir_all(&root);
@@ -525,7 +523,7 @@ impl ArtworkStore {
 
 /// What a zip file holds, told from its names alone (read from the file's end, so a big artwork
 /// isn't read to find out): how Import takes it.
-#[derive(uniffi::Enum, Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum ZipKind {
     /// A model's artwork, whole.
     ModelArtwork,
@@ -541,7 +539,6 @@ pub enum ZipKind {
     Other,
 }
 
-#[uniffi::export]
 pub fn zip_file_kind(path: String) -> ZipKind {
     let Some(names) = sumi_engine::zip::names_in_file(Path::new(&path)) else { return ZipKind::NotZip };
     let names = || names.iter().map(String::as_str);

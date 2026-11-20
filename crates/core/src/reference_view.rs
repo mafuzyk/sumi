@@ -5,7 +5,7 @@
 
 /// How a picture sits in the reference window: its zoom past fitting whole (1 fits it), and how
 /// far its middle is from the window's (window pixels).
-#[derive(Clone, Copy, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ReferenceView {
     pub zoom: f32,
     pub x: f32,
@@ -19,7 +19,7 @@ impl Default for ReferenceView {
 }
 
 /// The window's picture area and the picture's size, pixels.
-#[derive(Clone, Copy, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ReferenceSizes {
     pub window_width: f32,
     pub window_height: f32,
@@ -41,7 +41,6 @@ impl ReferenceSizes {
 /// The view after two fingers moved from (`from_x`, `from_y`) to (`to_x`, `to_y`) (their middle,
 /// window pixels) and spread `spread` times as far apart: what was under them stays under them,
 /// zoomed between fitting whole and [`MOST_ZOOM`], the window's middle kept on the picture.
-#[uniffi::export]
 pub fn reference_view_pinched(
     view: ReferenceView,
     sizes: ReferenceSizes,
@@ -67,7 +66,6 @@ pub fn reference_view_pinched(
 }
 
 /// Where the picture is drawn in the window: left, top, width and height (window pixels).
-#[uniffi::export]
 pub fn reference_picture_rect(view: ReferenceView, sizes: ReferenceSizes) -> Vec<f32> {
     let s = sizes.scale(view.zoom);
     let (w, h) = (sizes.picture_width * s, sizes.picture_height * s);
@@ -77,7 +75,6 @@ pub fn reference_picture_rect(view: ReferenceView, sizes: ReferenceSizes) -> Vec
 
 /// The picture's point (its pixels, fractional) under window point (`x`, `y`), and how many of
 /// its pixels a window pixel spans; none off the picture.
-#[uniffi::export]
 pub fn reference_picture_point(view: ReferenceView, sizes: ReferenceSizes, x: f32, y: f32) -> Option<Vec<f32>> {
     let s = sizes.scale(view.zoom);
     if s <= 0.0 {

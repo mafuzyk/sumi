@@ -321,7 +321,6 @@ fn seed_at(st: &crate::State, x: f32, y: f32) -> Option<(u32, u32)> {
     st.window_texel(x, y)
 }
 
-#[uniffi::export]
 impl CanvasSession {
     /// Whether window point (`x`, `y`) is on the artwork, where a dragged colour can come to rest.
     pub fn pour_lands(&self, x: f32, y: f32) -> bool {

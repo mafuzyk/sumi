@@ -49,7 +49,7 @@ fn straight() -> Vec<(f32, f32)> {
 }
 
 /// What an open adjustment shows: its values as its bar and panels show them.
-#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct AdjustShown {
     pub adjustment: Option<Adjustment>,
     /// The amount (0..1) swiped, dragged or painted.
@@ -511,7 +511,6 @@ impl CanvasSession {
     }
 }
 
-#[uniffi::export]
 impl CanvasSession {
     /// The gradient library Gradient Map maps by.
     pub fn use_gradients(&self, gradients: Arc<Gradients>) {

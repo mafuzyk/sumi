@@ -59,14 +59,14 @@ pub(crate) const STOPPED_DRIVER: &str = "Switched off: it stopped the graphics d
 const FILTER_DAMAGED: &str = "This filter's files don't hold up.";
 
 /// Where one came from. The route decides this, never the plugin.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PluginSource {
     File,
     Catalogue,
 }
 
 /// What a plugin holds, as its manifest says: one of these or several.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum PluginPart {
     /// Code, running on its hooks while the plugin is on.
     Hooks,
@@ -87,7 +87,7 @@ impl PluginPart {
 
 /// A setting on or off. `key` is what its value is kept under: one key to a value, across all of
 /// them (a plugin's start with its id).
-#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PluginSwitch {
     pub key: String,
     pub label: String,
@@ -97,7 +97,7 @@ pub struct PluginSwitch {
 }
 
 /// A setting along a range, in steps from its `least`.
-#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PluginSlider {
     pub key: String,
     pub label: String,
@@ -119,14 +119,14 @@ pub struct PluginSlider {
 }
 
 /// What a file control takes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PluginFileKind {
     /// A sound: a recording, kept as a WAV file.
     Sound,
 }
 
 /// A file someone picks, kept with the plugin; `chosen` is the name it was picked by, if one is.
-#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PluginFile {
     pub key: String,
     pub label: String,
@@ -136,7 +136,7 @@ pub struct PluginFile {
 
 /// Something a plugin does when its row is tapped: `key` is `<id>.<key>`. Its card lists it, and
 /// `place` may list it somewhere else too.
-#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PluginAction {
     pub key: String,
     pub label: String,
@@ -144,7 +144,7 @@ pub struct PluginAction {
 }
 
 /// Where else a plugin's action is listed, beside its card.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PluginPlace {
     /// Only on its card.
     Card,
@@ -172,14 +172,14 @@ impl PluginPlace {
 
 /// A row a plugin adds to the brush studio's Properties: a choice of a few, by their place, kept
 /// with each brush under `key` (`plugin:<id>:<key>`; 0 the first choice, as a brush starts).
-#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PluginBrushControl {
     pub key: String,
     pub label: String,
     pub choices: Vec<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, uniffi::Enum)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum PluginControl {
     Switch { control: PluginSwitch },
     Slider { control: PluginSlider },
@@ -187,7 +187,7 @@ pub enum PluginControl {
 }
 
 /// One as its page shows it.
-#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PluginInfo {
     pub id: String,
     pub name: String,
@@ -226,7 +226,7 @@ impl PluginInfo {
 
 /// What a plugin file is, for the one screen that asks whether to import it. `refused`: it can't
 /// be, and why; nothing else is set.
-#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PluginOffer {
     pub name: String,
     /// Its version, publisher marked as not checked, and a sentence on what it can do.
@@ -314,20 +314,17 @@ impl PluginSlider {
 }
 
 /// Where `slider` lands at `along` (0..1) of its way.
-#[uniffi::export]
 pub fn plugin_slider_at(slider: PluginSlider, along: f32) -> f32 {
     slider.stepped(slider.least + along.clamp(0.0, 1.0) * (slider.most - slider.least))
 }
 
 /// How far along its way (0..1) `value` is on `slider`.
-#[uniffi::export]
 pub fn plugin_slider_along(slider: PluginSlider, value: f32) -> f32 {
     let range = slider.most - slider.least;
     if range > 0.0 { ((value - slider.least) / range).clamp(0.0, 1.0) } else { 0.0 }
 }
 
 /// `value` on `slider` as it reads, to as many places as its step needs.
-#[uniffi::export]
 pub fn plugin_slider_shown(slider: PluginSlider, value: f32) -> String {
     if let Some(text) = slider.at_least.as_ref().filter(|_| value <= slider.least) {
         return text.clone();
@@ -349,13 +346,11 @@ pub fn plugin_slider_shown(slider: PluginSlider, value: f32) -> String {
 }
 
 /// Whether `slider` holds whole numbers: kept as one where what it is kept as matters.
-#[uniffi::export]
 pub fn plugin_slider_whole(slider: PluginSlider) -> bool {
     slider.step > 0.0 && slider.step.fract() == 0.0 && slider.least.fract() == 0.0
 }
 
 /// The most of a plugin file worth reading, in bytes: one more is enough to refuse it.
-#[uniffi::export]
 pub fn plugin_file_most_bytes() -> u64 {
     plugin_file::MOST_FILE as u64
 }
@@ -457,7 +452,7 @@ impl Listed {
 /// The lists, with each control's value as it stands. They live here and in no static, so a
 /// plugin goes the moment it is removed. The app keeps the values with its other interface
 /// settings, each under its control's key; the files live in `store`.
-#[derive(Debug, uniffi::Object)]
+#[derive(Debug)]
 pub struct Plugins {
     list: Mutex<Listed>,
     /// The folder imported plugins are kept in, `<id>/<version>/` each. None: none can be.
@@ -893,23 +888,19 @@ impl Plugins {
     }
 }
 
-#[uniffi::export]
 impl Plugins {
     /// Nothing, and nowhere to keep a file.
-    #[uniffi::constructor]
     pub fn new() -> Arc<Plugins> {
         Plugins::kept_in(None)
     }
 
     /// Every file kept in the folder `dir` that holds up.
-    #[uniffi::constructor]
     pub fn with_store(dir: String) -> Arc<Plugins> {
         Plugins::kept_in(Some(PathBuf::from(dir)))
     }
 
     /// The app's plugins: every file kept in the folder `dir` that holds up, with the files the app
     /// comes with added there first if it never added them before.
-    #[uniffi::constructor]
     pub fn with_bundled(dir: String) -> Arc<Plugins> {
         let plugins = Plugins::kept_in(Some(PathBuf::from(dir)));
         plugins.add_bundled(crate::bundled::BUNDLED);

@@ -52,7 +52,6 @@ impl CanvasSession {
     }
 }
 
-#[uniffi::export]
 impl CanvasSession {
     /// Recolor on, the reticle at window pixel (`x`, `y`) (the middle of the window, say),
     /// filling with (`r`, `g`, `b`) as far as `threshold` (0..1). Already on: nothing changes.

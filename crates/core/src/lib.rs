@@ -1,16 +1,6 @@
-//! The session both Sumi apps drive: a [`CanvasSession`] takes input from the interface, builds
-//! strokes with the engine and draws them with the GPU renderer. The Android app reaches it through
-//! UniFFI's Kotlin bindings, and it draws on its own render thread straight into the app's
-//! `SurfaceView`; the desktop app calls it directly and draws each frame into its window
-//! (`host.rs`).
-//!
-//! On Android the window crosses over through two small JNI functions (`window.rs`, the crate's
-//! only unsafe code with `layer.rs`): Kotlin hands its `Surface` to `NativeWindows.acquire` and
-//! passes the id it returns to [`CanvasSession::attach_window`]. The iPad app (UniFFI's Swift
-//! bindings) hands its canvas view's `CAMetalLayer` to `acquire_layer` (`layer.rs`) the same way,
-//! and the same render thread draws into it.
-
-uniffi::setup_scaffolding!();
+//! The native Sumi canvas session: a [`CanvasSession`] takes input from the desktop interface,
+//! builds strokes with the engine and draws them with the GPU renderer. The desktop controls the
+//! window and its render loop directly (`host.rs`).
 
 mod adjust;
 mod adjust_menu;
@@ -42,8 +32,6 @@ mod host;
 mod hues;
 mod interface_size;
 mod keys;
-#[cfg(target_os = "ios")]
-mod layer;
 mod layer_ops;
 mod layers;
 pub mod legacy;
@@ -64,14 +52,11 @@ mod plugins;
 mod pour;
 mod presets;
 mod project;
-mod projection;
 mod quick_menu;
 mod quickshape;
 mod recolor;
 mod reference_view;
 mod reference_window;
-#[cfg(any(target_os = "android", target_os = "ios"))]
-mod render;
 mod reveal;
 mod scene3d;
 mod selection;
@@ -87,15 +72,9 @@ mod timelapse;
 mod touch;
 mod transform;
 mod tween;
-#[cfg(target_os = "android")]
-mod window;
-// the iPad app's window is its layer: taken and drawn into as Android's is
-#[cfg(target_os = "ios")]
-use layer as window;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::thread::JoinHandle;
 
 use sumi_engine::brush::Brush;
 use sumi_engine::document::Document;
@@ -219,47 +198,47 @@ pub use transform::{
 };
 
 /// Colour around the canvas, sRGB; and with the light interface.
-#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+#[allow(dead_code)]
 pub(crate) const SURROUND: [f32; 3] = [37.0 / 255.0, 37.0 / 255.0, 37.0 / 255.0];
-#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+#[allow(dead_code)]
 pub(crate) const SURROUND_LIGHT: [f32; 3] = [206.0 / 255.0, 209.0 / 255.0, 210.0 / 255.0];
 
 /// The grid over the surround: its line colour (sRGB), and its spacing, line width (a point, its
 /// edges smoothed a third of a pixel out on a 2x screen) and top (the bar's height, none under
 /// it), in interface points. It is fixed to the glass: see [`CanvasSession::set_grid_origin`].
-#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+#[allow(dead_code)]
 pub(crate) const GRID_LINE: [f32; 3] = [46.0 / 255.0, 46.0 / 255.0, 46.0 / 255.0];
 /// The grid's lines with the light interface: a little darker than its surround.
-#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+#[allow(dead_code)]
 pub(crate) const GRID_LINE_LIGHT: [f32; 3] = [202.0 / 255.0, 205.0 / 255.0, 206.0 / 255.0];
-#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+#[allow(dead_code)]
 pub(crate) const GRID_SPACING_PT: f32 = 16.0;
-#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+#[allow(dead_code)]
 pub(crate) const GRID_WIDTH_PT: f32 = 4.0 / 3.0;
-#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+#[allow(dead_code)]
 pub(crate) const GRID_TOP_PT: f32 = 44.0;
 
 /// The bands over what is not selected: their period across the window and drift (points, points
 /// a second, so a period a second), and their coverage.
-#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+#[allow(dead_code)]
 pub(crate) const STRIPE_PERIOD_PT: f32 = 10.0;
-#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+#[allow(dead_code)]
 pub(crate) const STRIPE_SPEED_PT: f32 = 10.0;
-#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+#[allow(dead_code)]
 /// How far what is behind a frosted panel is blurred (Gaussian sigma, points).
 pub(crate) const BACKDROP_SIGMA_PT: f32 = 23.5;
-#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+#[allow(dead_code)]
 /// How dark the bands over what is not selected are, at full selection mask visibility.
 pub(crate) const STRIPE_COVERAGE: f32 = 0.25;
 /// What is selected is multiplied by this while selecting by colour, and covered by the other
 /// while the threshold is dragged (sRGB).
-#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+#[allow(dead_code)]
 pub(crate) const SELECTION_TINT: [f32; 3] = [1.0 / 255.0, 120.0 / 255.0, 1.0];
-#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+#[allow(dead_code)]
 pub(crate) const SELECTION_FILL: [f32; 3] = [50.0 / 255.0, 117.0 / 255.0, 247.0 / 255.0];
 
 /// One input sample in window pixels.
-#[derive(Clone, Copy, Debug, uniffi::Record)]
+#[derive(Clone, Copy, Debug)]
 pub struct PenSample {
     pub x: f32,
     pub y: f32,
@@ -273,11 +252,10 @@ pub struct PenSample {
     pub time_ms: f64,
     /// Radians the pen's barrel is turned (a brush set to azimuth and barrel roll turns with it);
     /// 0 for a pen that doesn't say.
-    #[uniffi(default = 0.0)]
     pub roll: f32,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PointerKind {
     Finger,
     Stylus,
@@ -296,7 +274,7 @@ impl From<PointerKind> for Pointer {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, uniffi::Enum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ToolKind {
     Paint,
     Erase,
@@ -313,7 +291,7 @@ impl ToolKind {
     }
 }
 
-#[derive(Clone, Debug, uniffi::Record)]
+#[derive(Clone, Debug)]
 pub struct CanvasInfo {
     pub width: u32,
     pub height: u32,
@@ -338,10 +316,8 @@ pub struct CanvasInfo {
     pub revision: u64,
 }
 
-#[derive(Debug, thiserror::Error, uniffi::Error)]
-pub enum MobileError {
-    #[error("window: {reason}")]
-    Window { reason: String },
+#[derive(Debug, thiserror::Error)]
+pub enum CanvasError {
     #[error("file: {reason}")]
     File { reason: String },
 }
@@ -365,14 +341,14 @@ const DEFAULT_SLIDERS: Sliders = Sliders { size: 0.3, opacity: 1.0 };
 
 /// How long the view takes to settle into place, and how much it gives on the way.
 const VIEW_SETTLE_SECONDS: f32 = 0.5;
-#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+#[allow(dead_code)]
 const VIEW_SETTLE_DAMPING: f32 = 0.8;
 /// How long the view takes to grow back to fit, slowing to a stop.
 const VIEW_EASE_SECONDS: f32 = 0.3;
 
 /// The view settling from `from` to `to`, begun at `start`, along `curve`.
 #[derive(Clone, Copy)]
-#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+#[allow(dead_code)]
 pub(crate) struct ViewMotion {
     pub(crate) from: View,
     pub(crate) to: View,
@@ -402,7 +378,7 @@ impl ViewCurve {
 
 impl State {
     /// Moves the view on to where its settling has got by now; true while it is still moving.
-    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    #[allow(dead_code)]
     pub(crate) fn step_view_motion(&mut self) -> bool {
         let Some(m) = self.view_motion else { return false };
         let t = m.start.elapsed().as_secs_f32();
@@ -519,7 +495,7 @@ pub(crate) struct State {
     stroke: Option<StrokeBuilder>,
     /// The open stroke's second, a dual brush's (drawn along the same input).
     second: Option<StrokeBuilder>,
-    #[cfg_attr(not(any(target_os = "android", test)), allow(dead_code))]
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) gpu: Option<Gpu>,
     pub(crate) canvas: Option<Canvas>,
     pub(crate) needs_frame: bool,
@@ -530,11 +506,6 @@ pub(crate) struct State {
     /// when its brush changes), and one was asked for meanwhile.
     pub(crate) holding_frames: bool,
     pub(crate) frame_held: bool,
-    pub(crate) stop: bool,
-    /// Project canvas: the second display's size, and that its thread should end.
-    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
-    pub(crate) projection_size: (u32, u32),
-    pub(crate) projection_stop: bool,
     pub(crate) frames: u64,
     /// The drawing pad's strokes as drawn (pointer and input), drawn again when the brush changes;
     /// `None` on a canvas that keeps none.
@@ -600,7 +571,7 @@ pub(crate) struct State {
     fit_insets: [f32; 4],
     /// Frosted panels open over the canvas: left, top, right, bottom and corner radius (window
     /// pixels).
-    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    #[allow(dead_code)]
     pub(crate) backdrops: Vec<[f32; 6]>,
     /// Where the glass over the canvas is thin (the side bar's slider tracks), the same way.
     pub(crate) backdrop_windows: Vec<[f32; 6]>,
@@ -695,7 +666,7 @@ impl State {
 
     /// The surround's grid in window pixels, shifted by `by` (where the window's corner lands on
     /// the target).
-    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    #[allow(dead_code)]
     pub(crate) fn surround_grid(&self, by: Vec2) -> sumi_gpu::SurroundGrid {
         let s = self.display_scale;
         let [x, y] = self.grid_origin.unwrap_or([0.5 * s, 0.5 * s]);
@@ -709,7 +680,7 @@ impl State {
     }
 
     /// The colour around the canvas.
-    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    #[allow(dead_code)]
     pub(crate) fn surround(&self) -> [f32; 3] {
         if self.light { SURROUND_LIGHT } else { SURROUND }
     }
@@ -1004,7 +975,7 @@ impl State {
     }
 
     /// Creates the canvas once there is a GPU.
-    #[cfg_attr(not(any(target_os = "android", test)), allow(dead_code))]
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn ensure_canvas(&mut self) {
         // one that couldn't be made isn't made again: what was opened stays, and a save writes it
         if self.canvas.is_some() || self.closed || self.canvas_failed {
@@ -1194,12 +1165,7 @@ fn lay_stroke(
 }
 
 pub(crate) struct Shared {
-    /// Fair when it matters: the render thread hands it on to whoever waits.
     state: parking_lot::Mutex<State>,
-    pub(crate) wake: parking_lot::Condvar,
-    thread: Mutex<Option<JoinHandle<()>>>,
-    /// Project canvas's render thread.
-    projection: Mutex<Option<JoinHandle<()>>>,
     /// Held while the artwork is saved: one save at a time, so two never write the same files.
     pub(crate) saving: Mutex<project::Saved>,
     /// The artwork's edits as the last save that worked found them, [`project::NOT_SAVED`]
@@ -1262,7 +1228,6 @@ impl Shared {
             return;
         }
         st.needs_frame = true;
-        self.wake.notify_all();
     }
 
     /// Creates the canvas once there is a GPU, as [`State::ensure_canvas`] does, but with the
@@ -1271,7 +1236,7 @@ impl Shared {
     /// out (and decoded) as it goes, so what was opened stays in the state (a save meanwhile still
     /// has it); if
     /// the document or what was opened changed meanwhile, the canvas is made again under the hold.
-    #[cfg_attr(not(any(target_os = "android", test)), allow(dead_code))]
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn make_canvas(&self) {
         let (gpu, doc, ids) = {
             let st = self.lock();
@@ -1418,7 +1383,7 @@ impl Shared {
 }
 
 /// A canvas being painted: the document, the brush, the input and the renderer.
-#[derive(uniffi::Object)]
+
 pub struct CanvasSession {
     pub(crate) shared: Arc<Shared>,
     /// Itself, for what it hands plugins told of an event.
@@ -1445,10 +1410,8 @@ impl CanvasSession {
     }
 }
 
-#[uniffi::export]
 impl CanvasSession {
     /// A new artwork of `width` × `height` pixels.
-    #[uniffi::constructor]
     pub fn new(width: u32, height: u32) -> Arc<CanvasSession> {
         let most = sumi_engine::document::canvas_edge_most();
         CanvasSession::with_document(
@@ -1536,9 +1499,6 @@ impl CanvasSession {
             frame_due: None,
             holding_frames: false,
             frame_held: false,
-            stop: false,
-            projection_size: (1, 1),
-            projection_stop: false,
             frames: 0,
             pad_strokes: None,
             grain_store: grain_store::GrainStore::default(),
@@ -1622,9 +1582,6 @@ impl CanvasSession {
             me: me.clone(),
             shared: Arc::new(Shared {
                 state: parking_lot::Mutex::new(state),
-                wake: parking_lot::Condvar::new(),
-                thread: Mutex::new(None),
-                projection: Mutex::new(None),
                 saving: Mutex::new(project::Saved::default()),
                 edits_saved: std::sync::atomic::AtomicU64::new(project::NOT_SAVED),
                 export_progress: std::sync::atomic::AtomicU32::new(0),
@@ -1636,51 +1593,8 @@ impl CanvasSession {
     }
 }
 
-#[uniffi::export]
 impl CanvasSession {
-    /// Starts drawing into the window `window` (an id from `NativeWindows.acquire`, or on iPadOS
-    /// from `acquire_layer`), `width` × `height` pixels. The session owns the window from
-    /// here on.
-    pub fn attach_window(&self, window: u64, width: u32, height: u32) -> Result<(), MobileError> {
-        self.detach_window();
-        #[cfg(any(target_os = "android", target_os = "ios"))]
-        {
-            let native =
-                window::take(window).ok_or_else(|| MobileError::Window { reason: format!("no window {window}") })?;
-            {
-                let mut st = self.shared.lock();
-                st.window_size = (width.max(1), height.max(1));
-                st.place_view();
-                st.stop = false;
-                st.reconfigure = true;
-                self.shared.frame(&mut st);
-            }
-            let shared = Arc::clone(&self.shared);
-            let handle = std::thread::Builder::new()
-                .name("sumi-render".to_owned())
-                .spawn(move || {
-                    // a panic (in a driver's wrapper, say) leaves the canvas saying it can't draw
-                    // rather than waiting on a thread that is gone
-                    let run = Arc::clone(&shared);
-                    if let Err(panic) =
-                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || render::run(run, native)))
-                    {
-                        let reason = format!("the renderer stopped: {}", sumi_gpu::panic_message(panic.as_ref()));
-                        log::error!("render thread: {reason}");
-                        shared.lock().error = Some(reason);
-                    }
-                })
-                .map_err(|e| MobileError::Window { reason: e.to_string() })?;
-            *self.shared.thread.lock().unwrap_or_else(|e| e.into_inner()) = Some(handle);
-            Ok(())
-        }
-        #[cfg(not(any(target_os = "android", target_os = "ios")))]
-        {
-            let _ = (width, height);
-            Err(MobileError::Window { reason: format!("windows are the tablet apps' only (asked for {window})") })
-        }
-    }
-
+    /// Updates the native window size without changing the painting session.
     pub fn resize_window(&self, width: u32, height: u32) {
         let mut st = self.shared.lock();
         let size = (width.max(1), height.max(1));
@@ -1688,21 +1602,6 @@ impl CanvasSession {
             st.window_size = size;
             st.reconfigure = true;
             self.shared.frame(&mut st);
-        }
-    }
-
-    /// Stops drawing and lets go of the window (call before the platform destroys it). Returns
-    /// once the render thread has finished.
-    pub fn detach_window(&self) {
-        let handle = self.shared.thread.lock().unwrap_or_else(|e| e.into_inner()).take();
-        if let Some(handle) = handle {
-            {
-                let mut st = self.shared.lock();
-                st.stop = true;
-                self.shared.wake.notify_all();
-            }
-            let _ = handle.join();
-            self.shared.lock().stop = false;
         }
     }
 
@@ -2487,12 +2386,6 @@ impl CanvasSession {
             st.revision += 1;
             self.shared.frame(st);
         }
-    }
-}
-
-impl Drop for CanvasSession {
-    fn drop(&mut self) {
-        self.detach_window();
     }
 }
 

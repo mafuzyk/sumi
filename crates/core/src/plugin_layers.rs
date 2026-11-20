@@ -2152,7 +2152,6 @@ pub(crate) fn items_reach(items: &[Item]) -> Option<[f32; 4]> {
     reach
 }
 
-#[uniffi::export]
 impl CanvasSession {
     /// A new layer of a plugin's kind `kind` (`<id>.<key>`) above the current one, named after the
     /// kind and made current, as the Layers panel's + adds one: 0 if no plugin on adds that kind, or
@@ -2200,8 +2199,8 @@ impl CanvasSession {
 
     /// The file plugin export `key` makes (see [`CanvasSession::plugin_exports`]) written to `path`,
     /// whole.
-    pub fn export_plugin(&self, key: String, path: String) -> Result<(), crate::MobileError> {
-        let reason = |why: &str| crate::MobileError::File { reason: why.to_owned() };
+    pub fn export_plugin(&self, key: String, path: String) -> Result<(), crate::CanvasError> {
+        let reason = |why: &str| crate::CanvasError::File { reason: why.to_owned() };
         let bytes = self.plugin_export_bytes(&key).ok_or_else(|| reason("the plugin couldn't make it"))?;
         crate::project::write_atomically(std::path::Path::new(&path), |p| {
             std::fs::write(p, &bytes).map_err(|e| reason(&format!("writing the file: {e}")))
