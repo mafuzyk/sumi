@@ -6196,7 +6196,7 @@ fn kept_brush_choices_with_entries_it_cant_read_keep_the_rest() {
 }
 
 #[test]
-fn the_brushes_are_kept_in_their_folder_and_an_earlier_version_s_taken_in() {
+fn the_brushes_are_kept_in_their_folder_and_existing_choices_are_read() {
     let dir = std::env::temp_dir().join(format!("sumi-brushes-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let d = dir.to_string_lossy().into_owned();
@@ -6212,12 +6212,10 @@ fn the_brushes_are_kept_in_their_folder_and_an_earlier_version_s_taken_in() {
     let t = CanvasSession::new(64, 64);
     assert!(t.open_brushes(d.clone()));
     assert_eq!((t.current_brush().set, t.current_brush().index), (0, 3));
-    // an earlier version's choices and seen counts go in only where the folder has none
+    // The desktop reads existing choices kept in its folder without the retired mobile importer.
     let other = r#"{"tools":[[0,1],[0,0],[0,0]],"sets":[],"sliders":[]}"#.to_owned();
-    assert!(crate::brush_library::adopt_kept_brushes(d.clone(), Some("1,1".to_owned()), Some(other.clone())));
     assert_eq!(std::fs::read_to_string(dir.join("choices.json")).unwrap(), t.saved_brush_choices());
-    std::fs::remove_file(dir.join("choices.json")).unwrap();
-    assert!(crate::brush_library::adopt_kept_brushes(d.clone(), None, Some(other)));
+    std::fs::write(dir.join("choices.json"), other).unwrap();
     let u = CanvasSession::new(64, 64);
     assert!(u.open_brushes(d));
     assert_eq!((u.current_brush().set, u.current_brush().index), (0, 1));
