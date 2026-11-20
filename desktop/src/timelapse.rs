@@ -6,7 +6,7 @@ use std::path::PathBuf;
 #[cfg(test)]
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, TrySendError, channel, sync_channel};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, TryRecvError, TrySendError, channel, sync_channel};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
@@ -41,6 +41,8 @@ pub struct TimeLapseUi {
     /// The video being made, to save once made, as its card shows it; made, it waits for the card
     /// to go before it is saved.
     exporting: Option<(Receiver<Result<PathBuf, String>>, crate::export_card::Exporting)>,
+    #[cfg(test)]
+    export_reader_metrics: Arc<ReaderMetrics>,
     card: crate::export_card::ExportCard,
     made: Option<PathBuf>,
 }
@@ -239,6 +241,8 @@ It can't be brought back."
         let following = Arc::clone(&done);
         let exporting = self.card.start(move || f32::from_bits(following.load(std::sync::atomic::Ordering::Relaxed)));
         let told = exporting.clone();
+        #[cfg(test)]
+        let export_reader_metrics = Arc::clone(&self.export_reader_metrics);
         let name: String = name.chars().filter(|c| c.is_alphanumeric() || " _-".contains(*c)).collect();
         let name = if name.trim().is_empty() { "Untitled Artwork".to_owned() } else { name.trim().to_owned() };
         // a path of its own: another export, or another video of this artwork, can't overwrite it
@@ -250,10 +254,14 @@ It can't be brought back."
                     Arc::clone(&lapse),
                     picks.clone(),
                     ReadPurpose::Export,
+                    Some(told.cancellation_flag()),
                     #[cfg(test)]
-                    None,
+                    Some(Arc::clone(&export_reader_metrics)),
                 );
-                let (_, first) = frames.recv().map_err(|_| "the first frame can't be read")?;
+                let (_, first) = frames.recv_until_cancelled(&told).map_err(|e| match e {
+                    ReadFrameError::Cancelled => "the time-lapse export was cancelled",
+                    ReadFrameError::Disconnected => "the first frame can't be read",
+                })?;
                 let (width, height) = (first.width, first.height);
                 let last = std::cell::RefCell::new(Some(first));
                 let settings = lapse.settings();
@@ -275,10 +283,13 @@ It can't be brought back."
                         let progress = n as f32 / picks.len().max(1) as f32;
                         done.store(progress.to_bits(), std::sync::atomic::Ordering::Relaxed);
                         // the first was read already; one that can't be read, the one before again
-                        if n > 0
-                            && let Ok((_, frame)) = frames.recv()
-                        {
-                            *last.borrow_mut() = Some(frame);
+                        if n > 0 {
+                            match frames.recv_until_cancelled(&told) {
+                                Ok((_, frame)) => *last.borrow_mut() = Some(frame),
+                                Err(ReadFrameError::Cancelled) => return None,
+                                // A missing/truncated frame still repeats the last good frame.
+                                Err(ReadFrameError::Disconnected) => {}
+                            }
                         }
                         Some(on_white(last.borrow().as_ref()?, w, h))
                     },
@@ -483,9 +494,48 @@ impl Drop for ActiveReader {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum ReadFrameError {
+    Cancelled,
+    Disconnected,
+}
+
 impl Reading {
+    #[cfg(test)]
     fn recv(&self) -> Result<(u32, ThumbnailImage), std::sync::mpsc::RecvError> {
         self.frames.recv()
+    }
+
+    /// Export-card cancellation is checked while waiting for *any* frame, including the
+    /// first one. Its atomic is also the reader's stop flag, so the worker wakes even
+    /// while waiting behind another Required decoder permit.
+    fn recv_until_cancelled(
+        &self,
+        exporting: &crate::export_card::Exporting,
+    ) -> Result<(u32, ThumbnailImage), ReadFrameError> {
+        loop {
+            if exporting.cancelled() {
+                self._stops.0.store(true, Ordering::Release);
+                return Err(ReadFrameError::Cancelled);
+            }
+            match self.frames.recv_timeout(Duration::from_millis(20)) {
+                Ok(frame) => {
+                    if exporting.cancelled() {
+                        self._stops.0.store(true, Ordering::Release);
+                        return Err(ReadFrameError::Cancelled);
+                    }
+                    return Ok(frame);
+                }
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => {
+                    return if exporting.cancelled() {
+                        Err(ReadFrameError::Cancelled)
+                    } else {
+                        Err(ReadFrameError::Disconnected)
+                    };
+                }
+            }
+        }
     }
 
     /// What it has come to: whether it is done, and the first cause it couldn't read a frame.
@@ -574,12 +624,13 @@ fn read_in_order(
     lapse: Arc<TimeLapse>,
     wanted: Vec<u32>,
     purpose: ReadPurpose,
+    cancellation: Option<Arc<AtomicBool>>,
     #[cfg(test)] metrics: Option<Arc<ReaderMetrics>>,
 ) -> Reading {
     let (tx, rx) = sync_channel(4);
     let state = Arc::new(Mutex::new(ReadState::default()));
     let shared = Arc::clone(&state);
-    let stop = Arc::new(AtomicBool::new(false));
+    let stop = cancellation.unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
     let stops = Stops(Arc::clone(&stop));
     std::thread::spawn(move || {
         let _finished = Finished(Arc::clone(&shared));
@@ -963,6 +1014,7 @@ impl TimeLapsePlayer {
                 Arc::clone(lapse),
                 wanted,
                 ReadPurpose::Replay,
+                None,
                 #[cfg(test)]
                 Some(Arc::clone(&self.reader_metrics)),
             );
@@ -1695,7 +1747,7 @@ mod tests {
         let lapse = recorded_video_fixture(&root, 48);
         // The preview receives only its first frame. Its producer fills the remaining
         // four slots, then must wait for space without holding the global decoder mutex.
-        let paused = read_in_order(Arc::clone(&lapse), (0..48).collect(), ReadPurpose::Replay, None);
+        let paused = read_in_order(Arc::clone(&lapse), (0..48).collect(), ReadPurpose::Replay, None, None);
         assert_eq!(paused.frames.recv_timeout(Duration::from_secs(5)).expect("preview frame").0, 0);
         let deadline = Instant::now() + Duration::from_secs(5);
         while !paused.state().hit_full_queue && Instant::now() < deadline {
@@ -1708,7 +1760,7 @@ mod tests {
         // preempt the preview, reap its ffmpeg child, and begin producing without the
         // user ever unpausing or draining the preview channel.
         let paused_stop = Arc::clone(&paused._stops.0);
-        let export = read_in_order(Arc::clone(&lapse), (0..48).collect(), ReadPurpose::Export, None);
+        let export = read_in_order(Arc::clone(&lapse), (0..48).collect(), ReadPurpose::Export, None, None);
         assert_eq!(
             export.frames.recv_timeout(Duration::from_secs(5)).expect("export starts despite paused preview").0,
             0
@@ -1729,7 +1781,7 @@ mod tests {
         assert!(export.state().hit_full_queue, "export did not reach the full-channel case");
         let export_state = Arc::clone(&export.state);
         drop(export);
-        let next = read_in_order(Arc::clone(&lapse), vec![0], ReadPurpose::Replay, None);
+        let next = read_in_order(Arc::clone(&lapse), vec![0], ReadPurpose::Replay, None, None);
         assert_eq!(
             next.frames.recv_timeout(Duration::from_secs(5)).expect("a new reader starts after export cancellation").0,
             0
@@ -1740,6 +1792,71 @@ mod tests {
         );
         drop(next);
         drop(paused);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn cancelling_export_card_while_required_decoder_is_held_stops_all_workers() {
+        let root = scratch("cancel-required-permit-from-card");
+        let art = root.join("artwork");
+        // Deliberately unreadable video: the first frame would fail if a decoder ever
+        // started. This test must cancel while still waiting for Required ownership,
+        // without relying on ffmpeg availability or any video callback.
+        unreadable_video(&art, true);
+        let lapse = TimeLapse::new(art.to_string_lossy().into_owned());
+        assert_eq!(lapse.count(), 1);
+        let held = crate::video::hold_required_decoder_for_test();
+
+        for attempt in 0..4 {
+            let mut ui = TimeLapseUi::default();
+            ui.lapse = Some((art.to_string_lossy().into_owned(), Arc::clone(&lapse)));
+            let metrics = Arc::clone(&ui.export_reader_metrics);
+            assert!(ui.export(None, &format!("cancel-required-{attempt}")).is_none());
+            assert!(ui.card.busy(), "a real export card is open");
+            let (done, card_exporting) = ui.exporting.as_ref().expect("real UI export handle");
+
+            let deadline = Instant::now() + Duration::from_secs(3);
+            while crate::video::waiting_decoders_for_test() == 0 && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            assert!(crate::video::waiting_decoders_for_test() > 0, "export worker did not wait for Required permit");
+            assert!(matches!(done.try_recv(), Err(std::sync::mpsc::TryRecvError::Empty)));
+            assert_eq!(metrics.active.load(Ordering::SeqCst), 1, "worker is alive and waiting");
+
+            // This is the same method used by the card's Cancel click, not drop(Reading).
+            card_exporting.cancel();
+            let finished = done.recv_timeout(Duration::from_secs(2)).expect("cancelled export must finish promptly");
+            assert!(finished.is_err(), "a cancelled export must not publish a video");
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while metrics.active.load(Ordering::SeqCst) > 0 && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            assert_eq!(metrics.started.load(Ordering::SeqCst), 1, "one export creates one frame reader");
+            assert_eq!(metrics.active.load(Ordering::SeqCst), 0, "no reader worker may survive card cancellation");
+            assert_eq!(metrics.peak.load(Ordering::SeqCst), 1, "no additional workers accumulated");
+            assert_eq!(crate::video::waiting_decoders_for_test(), 0, "cancelled Required wait must be removed");
+        }
+
+        drop(held);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn finishing_a_frame_reader_does_not_cancel_the_export_card() {
+        let root = scratch("successful-export-stop-is-not-cancel");
+        let art = root.join("artwork");
+        let dir = art.join("timelapse");
+        std::fs::create_dir_all(&dir).unwrap();
+        write_jpeg_colour(&dir.join("frame-000000.jpg"), [64, 128, 192]);
+        let lapse = TimeLapse::new(art.to_string_lossy().into_owned());
+        let mut card = crate::export_card::ExportCard::default();
+        let exporting = card.start(|| 0.0);
+        let reading = read_in_order(lapse, vec![0], ReadPurpose::Export, Some(exporting.cancellation_flag()), None);
+        assert_eq!(reading.frames.recv_timeout(Duration::from_secs(2)).unwrap().0, 0);
+        drop(reading);
+        assert!(!exporting.cancelled(), "finishing/dropping the reader must not discard a completed video");
+        exporting.ended(true);
+        assert!(!exporting.cancelled(), "successful export remains successful after its reader stops");
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -2109,6 +2226,7 @@ mod tests {
             Arc::clone(&lapse),
             wanted.clone(),
             ReadPurpose::Replay,
+            None,
             Some(Arc::new(ReaderMetrics::default())),
         )
         .frames

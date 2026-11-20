@@ -639,12 +639,45 @@ struct DecoderOwner {
 struct DecoderCoordinator {
     active: std::sync::Mutex<Option<DecoderOwner>>,
     available: std::sync::Condvar,
+    #[cfg(test)]
+    waiters: std::sync::atomic::AtomicUsize,
 }
 
 static DECODER_COORDINATOR: std::sync::LazyLock<DecoderCoordinator> = std::sync::LazyLock::new(|| DecoderCoordinator {
     active: std::sync::Mutex::new(None),
     available: std::sync::Condvar::new(),
+    #[cfg(test)]
+    waiters: std::sync::atomic::AtomicUsize::new(0),
 });
+
+#[cfg(test)]
+struct WaitingDecoderPermit;
+
+#[cfg(test)]
+impl WaitingDecoderPermit {
+    fn new() -> Self {
+        DECODER_COORDINATOR.waiters.fetch_add(1, Ordering::SeqCst);
+        Self
+    }
+}
+
+#[cfg(test)]
+impl Drop for WaitingDecoderPermit {
+    fn drop(&mut self) {
+        DECODER_COORDINATOR.waiters.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn hold_required_decoder_for_test() -> impl Drop {
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    decoder_permit(&stop, DecoderPriority::Required).expect("acquire Required decoder fixture")
+}
+
+#[cfg(test)]
+pub(crate) fn waiting_decoders_for_test() -> usize {
+    DECODER_COORDINATOR.waiters.load(Ordering::SeqCst)
+}
 
 /// The mutex guards only ownership changes, never decoding or callback delivery. There
 /// can still be at most one live video decoder: its permit is held until its child is reaped.
@@ -656,11 +689,17 @@ fn decoder_permit(
 ) -> Option<DecoderPermit> {
     use std::sync::atomic::Ordering;
     let mut active = DECODER_COORDINATOR.active.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    #[cfg(test)]
+    let mut waiting = None;
     loop {
         if stop.load(Ordering::Acquire) {
             return None;
         }
         if let Some(owner) = active.as_ref() {
+            #[cfg(test)]
+            if waiting.is_none() {
+                waiting = Some(WaitingDecoderPermit::new());
+            }
             // A paused replay may be waiting on a full four-frame channel. Interrupt it
             // (the timed send and FFmpeg watcher observe this flag) instead of waiting
             // indefinitely for its UI to consume another frame.

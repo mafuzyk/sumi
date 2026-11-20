@@ -46,12 +46,27 @@ const NOT_MADE: u8 = 2;
 #[derive(Clone)]
 pub struct Exporting {
     cancel: Arc<AtomicBool>,
+    // Kept separate from `cancel`: dropping a successfully completed frame reader
+    // must stop its worker without turning a successful export into a cancellation.
+    reader_stop: Arc<AtomicBool>,
     made: Arc<AtomicU8>,
 }
 
 impl Exporting {
     pub fn cancelled(&self) -> bool {
-        self.cancel.load(Ordering::Relaxed)
+        self.cancel.load(Ordering::Acquire)
+    }
+
+    /// The worker stop signal follows card cancellation, but not the other way around:
+    /// a naturally dropped reader must not make `cancelled()` true on successful export.
+    pub(crate) fn cancellation_flag(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.reader_stop)
+    }
+
+    /// Cancel the card's work, whether it is encoding or still waiting for its first frame.
+    pub(crate) fn cancel(&self) {
+        self.cancel.store(true, Ordering::Release);
+        self.reader_stop.store(true, Ordering::Release);
     }
 
     /// The export ended: `made` (the card shows its check) or not (cancelled or failed).
@@ -84,7 +99,11 @@ impl ExportCard {
     /// Shows the card for an export whose progress (0..1) `progress` tells; its thread is handed
     /// the [`Exporting`] to read Cancel from and to end it by.
     pub fn start(&mut self, progress: impl Fn() -> f32 + 'static) -> Exporting {
-        let exporting = Exporting { cancel: Arc::new(AtomicBool::new(false)), made: Arc::new(AtomicU8::new(RUNNING)) };
+        let exporting = Exporting {
+            cancel: Arc::new(AtomicBool::new(false)),
+            reader_stop: Arc::new(AtomicBool::new(false)),
+            made: Arc::new(AtomicU8::new(RUNNING)),
+        };
         self.run = Some(Run {
             progress: Box::new(progress),
             exporting: exporting.clone(),
@@ -187,7 +206,7 @@ impl ExportCard {
             }
         });
         if cancel {
-            run.exporting.cancel.store(true, Ordering::Relaxed);
+            run.exporting.cancel();
             run.closing = Some((Instant::now(), Ended::NotMade));
         }
         None
