@@ -1338,14 +1338,7 @@ mod tests {
     use egui::{Event, Modifiers, RawInput, Rect, pos2, vec2};
 
     use super::*;
-
-    /// These cases assert precise decoder lifetimes and must not preempt each other.
-    /// Other time-lapse tests still run in parallel. The actual export-card test
-    /// observes its own stop Arc, never a global count of unrelated waiters.
-    fn decoder_test_guard() -> std::sync::MutexGuard<'static, ()> {
-        static DECODER_TEST_LOCK: Mutex<()> = Mutex::new(());
-        DECODER_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
+    use crate::video::decoder_test_guard;
 
     #[test]
     fn player_transport_preserves_pause_seek_and_speed() {

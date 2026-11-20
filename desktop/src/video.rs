@@ -690,6 +690,15 @@ pub(crate) fn is_active_decoder_for_test(stop: &std::sync::Arc<std::sync::atomic
     DECODER_COORDINATOR.active.lock().unwrap().as_ref().is_some_and(|owner| std::sync::Arc::ptr_eq(&owner.stop, stop))
 }
 
+/// Shared by tests in `video` and `timelapse` that require exclusive access to the
+/// process-wide decoder. In particular, a real Required read must not legitimately
+/// preempt a Replay while another test asserts that two Replays coexist.
+#[cfg(test)]
+pub(crate) fn decoder_test_guard() -> std::sync::MutexGuard<'static, ()> {
+    static DECODER_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    DECODER_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 /// The mutex guards only ownership changes, never decoding or callback delivery. There
 /// can still be at most one live video decoder: its permit is held until its child is reaped.
 struct DecoderPermit;
@@ -1188,6 +1197,7 @@ mod ffmpeg {
         /// A tenth of a frame a second, as ffmpeg is told it (a ratio): each frame shows ten seconds.
         #[test]
         fn a_slow_video_made_by_ffmpeg_shows_each_frame_ten_seconds() {
+            let _decoder_test = super::super::decoder_test_guard();
             let dir = std::env::temp_dir().join(format!("sumi-ffmpeg-slow-{}", std::process::id()));
             let _ = std::fs::create_dir_all(&dir);
             let out = dir.join("slow.mp4");
@@ -1211,6 +1221,7 @@ mod ffmpeg {
 
         #[test]
         fn frames_made_into_a_video_by_ffmpeg_come_back() {
+            let _decoder_test = super::super::decoder_test_guard();
             let dir = std::env::temp_dir().join(format!("sumi-ffmpeg-{}", std::process::id()));
             let _ = std::fs::create_dir_all(&dir);
             let out = dir.join("made.mp4");
@@ -1304,6 +1315,7 @@ mod tests {
     /// made, each row in its place: an edge down the middle stays straight, not slanted.
     #[test]
     fn a_video_of_a_width_the_encoder_pads_comes_back_unslanted() {
+        let _decoder_test = super::decoder_test_guard();
         let dir = std::env::temp_dir().join(format!("sumi-padded-video-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         let out = dir.join("padded.mp4");
@@ -1338,6 +1350,7 @@ mod tests {
     /// seconds, its time exact.
     #[test]
     fn a_slow_video_shows_each_frame_ten_seconds() {
+        let _decoder_test = super::decoder_test_guard();
         let dir = std::env::temp_dir().join(format!("sumi-slow-video-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         let out = dir.join("slow.mp4");
