@@ -133,7 +133,7 @@ class LinuxPackagingTests(unittest.TestCase):
         self.assertIn("dst: /usr/bin/sumi", nfpm)
         self.assertIn("homepage: https://github.com/mafuzyk/sumi", nfpm)
         self.assertIn("license: GPL-3.0-or-later", nfpm)
-        self.assertIn("Sumi is a painting app", nfpm)
+        self.assertIn("Sumi is a native desktop painting studio", nfpm)
 
         pkg = (LINUX_DIR / "package.sh").read_text(encoding="utf-8")
         self.assertIn('BASENAME="sumi-$VERSION-linux-$ARCH"', pkg)
