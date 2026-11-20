@@ -94,17 +94,17 @@ const SWIPE_DELETE_FILL: u32 = 0xFFC4534B;
 const SWIPED_FADE: f32 = 0.64;
 /// A swiped artwork's actions growing in or going (seconds), on a spring.
 const SWIPE_S: f32 = 0.3;
-/// The Time-lapse pill over a thumbnail: 94 x 27 in the 39 points between a cell's top and its
-/// thumbnail; its fill, edge, words and clock.
-const TIME_LAPSE_PILL: (f32, f32) = (94.0, 27.0);
+/// Replay is an artwork action: it belongs inside the thumbnail, not in the empty grid gutter.
+const TIME_LAPSE_PILL: (f32, f32) = (106.0, 30.0);
 const TIME_LAPSE_FILL: Themed = Themed(0xFF383337, 0xFFE3DACE);
 const TIME_LAPSE_EDGE: Themed = Themed(0xFF8A7C80, 0xFFA89A9C);
 const TIME_LAPSE_INK: Themed = Themed(0xFFF0EAE6, 0xFF302C2E);
 const TIME_LAPSE_CLOCK: Themed = Themed(0xFFF0EAE6, 0xFF302C2E);
-/// The Sumi Start page left studio deck (wide windows): the paper hero card with the enso mark,
-/// "sumi" wordmark and tagline, plus the "New drawing" preset list, custom size and "Open a file...".
+/// The studio's compact editorial Start deck: brand, paper choices and two-column sizes.
 pub const START_DECK_MIN_WIDTH: f32 = 1040.0;
 pub const START_DECK_WIDTH: f32 = 420.0;
+/// When the window is shorter, the standard gallery is preferable to a clipped Start deck.
+pub const START_DECK_MIN_HEIGHT: f32 = 560.0;
 /// The deck is the ground, its hero the one paper plane (a shade of paper in the light look too).
 const START_DECK_FILL: Themed = Themed(0xFF211F22, 0xFFE9E1D6);
 const START_HERO_FILL: Themed = Themed(0xFFE6DED4, 0xFFF6F1E9);
@@ -116,6 +116,10 @@ const START_NOTE_INK: Themed = Themed(0xFFBDB2B2, 0xFF645C54);
 const START_BUTTON_FILL: Themed = Themed(0xFF383337, 0xFFDDD3C6);
 const START_BUTTON_HOVER: Themed = Themed(0xFF453E43, 0xFFD3C8BA);
 const START_BUTTON_EDGE: Themed = Themed(0xFF50484C, 0xFFC2B6A8);
+const START_CARD_FILL: Themed = Themed(0xFF2C292D, 0xFFF4ECE1);
+const START_CARD_EDGE: Themed = Themed(0xFF51494C, 0xFFD0C1B0);
+const START_ACCENT: Themed = crate::look::pc::ACTIVE;
+const START_HERO_HEIGHT_MAX: f32 = 176.0;
 /// A width or height being typed on the Start deck: which, the text, and whether it has been
 /// focused (the whole value is selected on that first frame).
 #[derive(Clone)]
@@ -129,16 +133,34 @@ struct StartEdit {
     valid: bool,
 }
 
-/// The Start deck's size fields, once per preset list, from the window's size.
+fn start_hero(screen: Rect) -> Rect {
+    Rect::from_min_size(
+        pos2(screen.left() + 20.0, screen.top() + 20.0),
+        vec2(START_DECK_WIDTH - 40.0, (screen.height() * 0.24).clamp(126.0, START_HERO_HEIGHT_MAX)),
+    )
+}
+
+fn start_section_y(screen: Rect) -> f32 {
+    start_hero(screen).bottom() + 24.0
+}
+
+fn start_preset_rect(screen: Rect, index: usize) -> Rect {
+    let left = screen.left() + 20.0;
+    let top = start_section_y(screen) + 34.0;
+    let card_h = ((screen.bottom() - top - 104.0) / 3.0).clamp(56.0, 76.0);
+    let gap = 8.0;
+    let card_w = (START_DECK_WIDTH - 40.0 - gap) / 2.0;
+    Rect::from_min_size(
+        pos2(left + (index % 2) as f32 * (card_w + gap), top + (index / 2) as f32 * (card_h + gap)),
+        vec2(card_w, card_h),
+    )
+}
+
+/// The Start deck's size fields sit immediately below the preset cards.
 fn start_size_layout(screen: Rect) -> (Rect, Rect, Rect) {
     let deck = Rect::from_min_max(screen.min, pos2(screen.left() + START_DECK_WIDTH, screen.bottom()));
     let pad = 20.0;
-    let inner_w = START_DECK_WIDTH - pad * 2.0;
-    let hero_h = (screen.height() * 0.34).clamp(220.0, 310.0);
-    let hero = Rect::from_min_size(pos2(deck.left() + pad, deck.top() + pad), vec2(inner_w, hero_h));
-    let list_y = hero.bottom() + 22.0 + 28.0;
-    let row_h = ((deck.bottom() - list_y - 118.0) / START_SIZES.len() as f32).clamp(36.0, 44.0);
-    let spin_y = list_y + START_SIZES.len() as f32 * (row_h + 2.0) + 6.0;
+    let spin_y = start_preset_rect(screen, START_SIZES.len() - 1).bottom() + 16.0;
     let width = Rect::from_min_size(pos2(deck.left() + pad, spin_y), vec2(62.0, 30.0));
     let height = Rect::from_min_size(pos2(width.left() + 135.0, spin_y), vec2(62.0, 30.0));
     let create = Rect::from_min_max(pos2(height.right() + 63.0, spin_y), pos2(deck.right() - pad, spin_y + 30.0));
@@ -773,12 +795,14 @@ impl Gallery {
         }
     }
 
-    /// Where an artwork's Time-lapse pill goes: in the 39-point gutter over its thumbnail, centred
-    /// over it.
+    /// Anchor the replay action in the artwork's lower right corner, with room from the edge.
     fn time_lapse_pill(cell: Rect) -> Rect {
         let (width, height) = TIME_LAPSE_PILL;
-        let top = Self::thumb_box(cell).top() - cell.top();
-        Rect::from_min_size(pos2(cell.center().x - width / 2.0, cell.top() + (top - height) / 2.0), vec2(width, height))
+        let thumb = Self::thumb_box(cell);
+        let inset = (thumb.width().min(thumb.height()) * 0.15).clamp(4.0, 9.0);
+        let width = width.min((thumb.width() - inset * 2.0).max(20.0));
+        let height = height.min((thumb.height() - inset * 2.0).max(16.0));
+        Rect::from_min_size(pos2(thumb.right() - width - inset, thumb.bottom() - height - inset), vec2(width, height))
     }
 
     /// Draws the Time-lapse pill, lit on hover and pressed, and ringed while it has the focus.
@@ -795,16 +819,21 @@ impl Gallery {
         ui.painter().rect_filled(rect, rect.height() / 2.0, fill);
         let edge = if hovered { argb(TIME_LAPSE_CLOCK) } else { argb(TIME_LAPSE_EDGE) };
         ui.painter().rect_stroke(rect, rect.height() / 2.0, Stroke::new(1.0, edge), egui::StrokeKind::Inside);
-        look.icon(ui, &icons::CLOCK, pos2(rect.left() + 10.0, rect.center().y), 11.0, argb(TIME_LAPSE_CLOCK));
-        text(
-            ui.painter(),
-            pos2(rect.left() + 24.0, rect.center().y),
-            Align2::LEFT_CENTER,
-            "Time-lapse",
-            11.0,
-            Weight::SemiBold,
-            argb(TIME_LAPSE_INK),
-        );
+        if rect.width() < 94.0 {
+            // Tiny grid cells have space for the clock only; tooltip carries the full name.
+            look.icon(ui, &icons::CLOCK, rect.center(), 14.0, argb(TIME_LAPSE_CLOCK));
+        } else {
+            look.icon(ui, &icons::CLOCK, pos2(rect.left() + 10.0, rect.center().y), 11.0, argb(TIME_LAPSE_CLOCK));
+            text(
+                ui.painter(),
+                pos2(rect.left() + 24.0, rect.center().y),
+                Align2::LEFT_CENTER,
+                "Replay",
+                11.0,
+                Weight::SemiBold,
+                argb(TIME_LAPSE_INK),
+            );
+        }
         if focused {
             ui.painter().rect_stroke(
                 rect.expand(1.5),
@@ -865,7 +894,7 @@ impl Gallery {
     /// Where the artwork grid sits in `screen`: to the right of the Sumi Start deck on wide windows
     /// when not inside a stack, or across the whole window on compact windows.
     pub fn grid_rect(screen: Rect, in_stack: bool) -> Rect {
-        let left = if !in_stack && screen.width() >= START_DECK_MIN_WIDTH {
+        let left = if !in_stack && screen.width() >= START_DECK_MIN_WIDTH && screen.height() >= START_DECK_MIN_HEIGHT {
             screen.left() + START_DECK_WIDTH
         } else {
             screen.left()
@@ -893,22 +922,21 @@ impl Gallery {
 
         let pad = 20.0;
         let inner_w = START_DECK_WIDTH - pad * 2.0;
-        let hero_h = (screen.height() * 0.34).clamp(220.0, 310.0);
-        let hero = Rect::from_min_size(pos2(deck.left() + pad, deck.top() + pad), vec2(inner_w, hero_h));
-        let shadow = egui::epaint::Shadow { offset: [0, 4], blur: 12, spread: 0, color: Color32::from_black_alpha(64) };
-        ui.painter().add(shadow.as_shape(hero, 12));
-        ui.painter().rect_filled(hero, 12.0, argb(START_HERO_FILL));
+        let hero = start_hero(screen);
+        // Uncoated-paper cover rather than a generic raised dashboard card.
+        ui.painter().rect_filled(hero, 3.0, argb(START_HERO_FILL));
+        ui.painter().rect_filled(Rect::from_min_size(hero.min, vec2(4.0, hero.height())), 0.0, argb(START_ACCENT));
         if let Some(t) = &self.enso_mark {
-            let side = (hero.height() - 96.0).clamp(96.0, 176.0);
+            let side = (hero.height() - 28.0).min(132.0);
             let mark_rect =
-                Rect::from_center_size(pos2(hero.center().x, hero.top() + 18.0 + side / 2.0), vec2(side, side));
+                Rect::from_center_size(pos2(hero.left() + 22.0 + side / 2.0, hero.center().y), vec2(side, side));
             let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
             ui.painter().image(t.id(), mark_rect, uv, Color32::WHITE);
         }
-        let word_at = pos2(hero.left() + 24.0, hero.bottom() - 78.0);
+        let word_at = pos2(hero.left() + 166.0, hero.center().y - 34.0);
         let word_rect =
-            text(ui.painter(), word_at, Align2::LEFT_TOP, "sumi", 44.0, Weight::Medium, argb(START_HERO_WORD));
-        let seal = Rect::from_min_size(pos2(word_rect.right() + 12.0, word_rect.top() + 5.0), vec2(18.0, 18.0));
+            text(ui.painter(), word_at, Align2::LEFT_TOP, "sumi", 43.0, Weight::Medium, argb(START_HERO_WORD));
+        let seal = Rect::from_min_size(pos2(word_rect.right() + 10.0, word_rect.top() + 5.0), vec2(17.0, 17.0));
         ui.painter().rect_filled(seal, 3.0, argb(crate::look::pc::SEAL_FILL));
         let seal_center = seal.center();
         let seal_radius = 5.2;
@@ -923,10 +951,10 @@ impl Gallery {
         ui.painter().add(egui::Shape::line(enso, Stroke::new(1.5, argb(crate::look::pc::PAPER))));
         text(
             ui.painter(),
-            pos2(hero.left() + 24.0, word_rect.bottom() + 2.0),
+            pos2(hero.left() + 168.0, word_rect.bottom() + 3.0),
             Align2::LEFT_TOP,
-            "A painting studio for pencil and ink.",
-            13.5,
+            "Pencil, ink & colour",
+            13.0,
             Weight::Regular,
             argb(START_HERO_TAG),
         );
@@ -939,12 +967,12 @@ impl Gallery {
         }
 
         let mut asked = None;
-        let mut y = hero.bottom() + 22.0;
+        let y = start_section_y(screen);
         text(
             ui.painter(),
             pos2(deck.left() + pad + 4.0, y),
             Align2::LEFT_TOP,
-            "New drawing",
+            "New canvas",
             16.0,
             Weight::SemiBold,
             argb(TITLE),
@@ -965,43 +993,45 @@ impl Gallery {
                 self.start_paper = rgb;
             }
         }
-        y += 28.0;
-
         let paper_tint =
             Color32::from_rgb((self.start_paper >> 16) as u8, (self.start_paper >> 8) as u8, self.start_paper as u8);
         let (sw, sh) = self.screen_px;
-        let row_h = ((deck.bottom() - y - 118.0) / START_SIZES.len() as f32).clamp(36.0, 44.0);
         for (i, &(label, w, h)) in START_SIZES.iter().enumerate() {
             let (pw, ph) = if i == 0 { (sw.max(1), sh.max(1)) } else { (w, h) };
-            let row = Rect::from_min_size(pos2(deck.left() + pad, y), vec2(inner_w, row_h));
+            let row = start_preset_rect(screen, i);
             let resp = ui
                 .interact(row, ui.scope_id().with(("start preset", i)), Sense::click())
                 .on_hover_cursor(egui::CursorIcon::PointingHand);
-            if resp.hovered() || resp.is_pointer_button_down_on() {
-                ui.painter().rect_filled(row, 7.0, argb(START_ROW_HOVER));
-            }
-            let scale = 26.0 / (pw.max(ph) as f32);
+            let active = resp.hovered() || resp.is_pointer_button_down_on();
+            ui.painter().rect_filled(row, 6.0, argb(if active { START_ROW_HOVER } else { START_CARD_FILL }));
+            ui.painter().rect_stroke(
+                row,
+                6.0,
+                Stroke::new(1.0, if active { argb(START_ACCENT) } else { argb(START_CARD_EDGE) }),
+                egui::StrokeKind::Inside,
+            );
+            let scale = 30.0 / (pw.max(ph) as f32);
             let shape_size = vec2((pw as f32 * scale).max(8.0), (ph as f32 * scale).max(8.0));
-            let holder = Rect::from_min_size(pos2(row.left() + 10.0, row.center().y - 14.0), vec2(32.0, 28.0));
+            let holder = Rect::from_center_size(pos2(row.left() + 30.0, row.center().y), vec2(34.0, 32.0));
             let shape = Rect::from_center_size(holder.center(), shape_size);
             ui.painter().rect_filled(shape, 1.5, paper_tint);
             ui.painter().rect_stroke(shape, 1.5, Stroke::new(1.0, argb(START_SHAPE_EDGE)), egui::StrokeKind::Inside);
             text(
                 ui.painter(),
-                pos2(holder.right() + 12.0, row.center().y - 7.0),
+                pos2(holder.right() + 10.0, row.center().y - 9.0),
                 Align2::LEFT_CENTER,
                 label,
-                13.5,
+                12.5,
                 Weight::SemiBold,
                 argb(TITLE),
             );
             let dims = format!("{pw} \u{d7} {ph} px");
             text(
                 ui.painter(),
-                pos2(holder.right() + 12.0, row.center().y + 8.5),
+                pos2(holder.right() + 10.0, row.center().y + 9.0),
                 Align2::LEFT_CENTER,
                 &dims,
-                11.5,
+                10.5,
                 Weight::Regular,
                 argb(START_NOTE_INK),
             );
@@ -1025,7 +1055,6 @@ impl Gallery {
                     asked = Some(Asked::New(preset, self.folder()));
                 }
             }
-            y += row_h + 2.0;
         }
 
         let (width_box, height_box, create_btn) = start_size_layout(screen);
@@ -1206,7 +1235,9 @@ impl Gallery {
             asked = Some(Asked::New(preset, self.folder()));
         }
 
-        let open_y = (deck.bottom() - 48.0).max(spin_y + 40.0);
+        // File import is the other way to begin, directly after the custom-size action.
+        // Anchoring it to the window bottom made it look unrelated to the canvas controls.
+        let open_y = (spin_y + 44.0).min(deck.bottom() - 48.0);
         let open_btn = Rect::from_min_size(pos2(deck.left() + pad, open_y), vec2(inner_w, 32.0));
         let open_resp = ui
             .interact(open_btn, ui.scope_id().with("start open file"), Sense::click())
@@ -1218,7 +1249,7 @@ impl Gallery {
             ui.painter(),
             open_btn.center(),
             Align2::CENTER_CENTER,
-            "Open a file...",
+            "Open an existing artwork",
             13.5,
             Weight::Medium,
             argb(TITLE),
@@ -1243,7 +1274,10 @@ impl Gallery {
                 ui.allocate_rect(screen, Sense::hover());
                 ui.painter().rect_filled(screen, 0, argb(BACKGROUND));
                 let in_stack = self.stack.is_some();
-                let deck_asked = if !in_stack && screen.width() >= START_DECK_MIN_WIDTH {
+                let deck_asked = if !in_stack
+                    && screen.width() >= START_DECK_MIN_WIDTH
+                    && screen.height() >= START_DECK_MIN_HEIGHT
+                {
                     self.start_deck(ctx, ui, screen)
                 } else {
                     None
@@ -3109,9 +3143,9 @@ mod tests {
     use egui::{Color32, Event, Modifiers, PointerButton, Pos2, RawInput, Rect, Stroke, pos2, vec2};
 
     use super::{
-        Asked, FORMAT_ROW, Gallery, HEADER, SHARE_ROWS, START_ROW_HOVER, ShareRow, Weight, argb, formats_beside,
-        one_line, paper_swatch_rim, retain_live_thumbs, share_group_height, share_panel_height, start_clamped,
-        start_paper_swatches, start_preset, start_size_layout,
+        Asked, FORMAT_ROW, Gallery, HEADER, SHARE_ROWS, START_ROW_HOVER, ShareRow, TIME_LAPSE_PILL, Weight, argb,
+        formats_beside, one_line, paper_swatch_rim, retain_live_thumbs, share_group_height, share_panel_height,
+        start_clamped, start_paper_swatches, start_preset, start_section_y, start_size_layout,
     };
 
     /// The first cell of the grid at this window size, as the gallery lays it out.
@@ -3489,8 +3523,7 @@ mod tests {
         gallery.start_size = (3000, 2000);
         let screen = Rect::from_min_size(pos2(0.0, 0.0), vec2(1440.0, 900.0));
         let (width_box, height_box, create) = start_size_layout(screen);
-        let hero_h = (screen.height() * 0.34).clamp(220.0, 310.0);
-        let header_y = screen.top() + 20.0 + hero_h + 22.0;
+        let header_y = start_section_y(screen);
         let kraft = start_paper_swatches(screen, header_y)[3];
         assert!(width_box.top() > header_y && height_box.top() > header_y);
 
@@ -3516,8 +3549,7 @@ mod tests {
         let mut gallery =
             Gallery::with_store(sumi_core::ArtworkStore::open(root.to_string_lossy().into_owned()), Vec::new());
         let screen = Rect::from_min_size(pos2(0.0, 0.0), vec2(1440.0, 900.0));
-        let hero_h = (screen.height() * 0.34).clamp(220.0, 310.0);
-        let header_y = screen.top() + 20.0 + hero_h + 22.0;
+        let header_y = start_section_y(screen);
         let swatches = start_paper_swatches(screen, header_y);
         let (ctx, mut look, mut time) = (egui::Context::default(), crate::look::Look::default(), 0.0);
         crate::look::install_fonts(&ctx);
@@ -3578,20 +3610,40 @@ mod tests {
     }
 
     #[test]
-    fn the_time_lapse_pill_sits_in_the_gutter_and_fits_a_160_thumbnail() {
+    fn replay_action_is_part_of_the_thumbnail_and_fits_a_160_thumbnail() {
         for (width, height) in [(1440.0, 900.0), (800.0, 600.0)] {
             let cell = first_cell(width, height);
             let thumbnail = Gallery::thumb_box(cell);
             let pill = Gallery::time_lapse_pill(cell);
-            assert!((pill.width() - 94.0).abs() < 0.01, "{width}x{height}: {}", pill.width());
-            assert!((26.0..=28.0).contains(&pill.height()), "{width}x{height}: {}", pill.height());
-            assert!(pill.top() >= cell.top(), "{width}x{height}");
-            assert!(pill.bottom() <= thumbnail.top(), "{width}x{height}");
-            assert!(pill.left() >= cell.left() && pill.right() <= cell.right(), "{width}x{height}");
+            assert!((pill.width() - 106.0).abs() < 0.01, "{width}x{height}: {}", pill.width());
+            assert!((pill.height() - 30.0).abs() < 0.01, "{width}x{height}: {}", pill.height());
+            assert!(pill.top() > thumbnail.top(), "{width}x{height}");
+            assert!(pill.bottom() < thumbnail.bottom(), "{width}x{height}");
+            assert!(pill.left() > thumbnail.left() && pill.right() < thumbnail.right(), "{width}x{height}");
             assert!(pill.width() <= thumbnail.width(), "{width}x{height}");
         }
         // at 800 x 600 the cells are four across: 200 wide, so the thumbnail is 160
         assert!((Gallery::thumb_box(first_cell(800.0, 600.0)).width() - 160.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn replay_action_keeps_inside_very_small_thumbnail_without_leaking_into_adjacent_cells() {
+        let cell = first_cell(480.0, 300.0);
+        let thumbnail = Gallery::thumb_box(cell);
+        assert_eq!(thumbnail.width(), 80.0);
+        let replay = Gallery::time_lapse_pill(cell);
+        assert!(replay.width() < TIME_LAPSE_PILL.0);
+        assert!(thumbnail.contains(replay.min), "top-left exceeds thumbnail: {replay:?}");
+        assert!(thumbnail.contains(replay.max), "bottom-right exceeds thumbnail: {replay:?}");
+    }
+
+    #[test]
+    fn short_wide_windows_use_the_regular_gallery_instead_of_clipping_start_controls() {
+        let short = Rect::from_min_size(pos2(0.0, 0.0), vec2(1040.0, 450.0));
+        let tall = Rect::from_min_size(pos2(0.0, 0.0), vec2(1040.0, 600.0));
+        assert_eq!(Gallery::grid_rect(short, false).left(), short.left());
+        assert_eq!(Gallery::grid_rect(tall, false).left(), tall.left() + super::START_DECK_WIDTH);
+        assert!(super::start_size_layout(tall).2.bottom() < tall.bottom());
     }
 
     #[test]
@@ -3604,11 +3656,11 @@ mod tests {
             ..RawInput::default()
         };
         let mut out = ctx.run_ui(raw, |ui| {
-            width = one_line(ui, "Time-lapse", 11.0, Weight::SemiBold, Color32::WHITE, f32::INFINITY).size().x;
+            width = one_line(ui, "Replay", 11.0, Weight::SemiBold, Color32::WHITE, f32::INFINITY).size().x;
         });
         out.textures_delta.clear();
         // the clock starts 10 in and the words 24 in, with 8 to spare at the pill's end
-        assert!(24.0 + width <= 94.0 - 8.0, "the words are {width} wide");
+        assert!(24.0 + width <= TIME_LAPSE_PILL.0 - 8.0, "the words are {width} wide");
     }
 
     #[test]

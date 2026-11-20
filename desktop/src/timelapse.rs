@@ -646,12 +646,14 @@ fn save_staging(to: &std::path::Path, n: u32) -> PathBuf {
     to.with_file_name(format!(".sumi-save-{}-{n}.part", std::process::id()))
 }
 
-/// The time-lapse replayed over everything at its frame rate; dragging across the screen scrubs
-/// through it. A bar on top: the title, the time into the replay, and Done.
+/// The artwork replayed with transport controls. Decoding stays on the reader thread.
 pub(crate) struct TimeLapsePlayer {
     count: u32,
     index: u32,
     stepped: Instant,
+    playing: bool,
+    speed: u32,
+    timeline_scrubbing: bool,
     /// Dragged: where it began and the frame then.
     scrub: Option<(f32, u32)>,
     shown: Option<(u32, TextureHandle)>,
@@ -663,14 +665,15 @@ pub(crate) struct TimeLapsePlayer {
     lapse: Option<Arc<TimeLapse>>,
     /// Why no frame could be shown, once its frames were all read.
     unavailable: Option<&'static str>,
-    /// Whether a frame has been shown: only one that never came says it can't read them.
-    ever_shown: bool,
 }
 
 /// Frames read ahead from `from`: the next to come, and one come before it was wanted.
 struct Ahead {
     from: u32,
     next: u32,
+    /// Last frame requested, exclusive; a playback window is bounded even at 16x.
+    until: u32,
+    stride: u32,
     waiting: Option<(u32, ThumbnailImage)>,
     reading: Reading,
 }
@@ -683,13 +686,15 @@ impl TimeLapsePlayer {
             count,
             index: 0,
             stepped: Instant::now(),
+            playing: count > 1,
+            speed: 1,
+            timeline_scrubbing: false,
             scrub: None,
             shown: None,
             ahead: None,
             began: Instant::now(),
             lapse: lapse.filter(|_| count > 0),
             unavailable: None,
-            ever_shown: false,
         }
     }
 
@@ -715,6 +720,56 @@ impl TimeLapsePlayer {
         self.ahead.as_ref().map(|a| Arc::clone(&a.reading._stops.0))
     }
 
+    /// Seek in recorded frames, independent of the speed of playback.
+    fn seek(&mut self, frame: u32) {
+        let next = frame.min(self.count.saturating_sub(1));
+        if next != self.index {
+            // A reader may already have consumed this frame and be holding a later one.
+            // Reusing it after a seek can leave replay stuck forever on that later frame.
+            // Dropping the reader cancels its background decoding without blocking UI.
+            self.ahead = None;
+            self.unavailable = None;
+        }
+        self.index = next;
+        self.stepped = Instant::now();
+    }
+
+    fn jump_seconds(&mut self, seconds: i32) {
+        let delta = i64::from(seconds) * i64::from(TIME_LAPSE_FPS);
+        self.seek((i64::from(self.index) + delta).clamp(0, i64::from(self.count.saturating_sub(1))) as u32);
+    }
+
+    fn toggle_playback(&mut self) {
+        if self.count <= 1 {
+            return;
+        }
+        if !self.playing && self.index + 1 == self.count {
+            self.seek(0);
+        }
+        self.playing = !self.playing;
+        self.stepped = Instant::now();
+    }
+
+    /// Playback never outruns the reader: speed skips frames, not decoding on the UI thread.
+    fn advance(&mut self, ready: bool, elapsed: Duration) {
+        if !self.playing || !ready || self.scrub.is_some() || self.timeline_scrubbing {
+            return;
+        }
+        let step = Duration::from_secs_f64(1.0 / f64::from(TIME_LAPSE_FPS));
+        if elapsed >= step {
+            self.index = self.index.saturating_add(self.speed).min(self.count.saturating_sub(1));
+            self.stepped = Instant::now();
+            if self.index + 1 >= self.count {
+                self.playing = false;
+            }
+        }
+    }
+
+    fn timeline_frame(&self, x: f32, bar: Rect) -> u32 {
+        let fraction = ((x - bar.left()) / bar.width().max(1.0)).clamp(0.0, 1.0);
+        (fraction * self.count.saturating_sub(1) as f32).round() as u32
+    }
+
     /// The frame to show now, once read: frames read ahead from it, again from where it is when
     /// it jumps back or far ahead (while scrubbing, at most every 0.1 s). Once all its frames have
     /// been read without one to show, it says why it can't instead of staying blank.
@@ -730,12 +785,22 @@ impl TimeLapsePlayer {
         // scrubbed back past the frame shown, to one this read has already gone by: read it again
         let behind = shown.is_some_and(|shown| want < shown);
         let off = self.ahead.as_ref().is_none_or(|a| {
-            want < a.from || want > a.next + TIME_LAPSE_FPS || (behind && a.next > want && a.waiting.is_none())
+            want < a.from
+                || want >= a.until
+                || want > a.next.saturating_add(TIME_LAPSE_FPS)
+                // A held future frame cannot satisfy a backward seek. Even with `waiting`
+                // populated we must restart the reader once the scrub throttle allows it.
+                || (behind && a.next > want && a.from != want)
+                || a.stride != self.speed
         });
-        // a backward seek starts again at once; another (while dragging) at most every 0.1 s
-        if off && (self.scrub.is_none() || behind || self.began.elapsed() >= Duration::from_millis(100)) {
-            let reading = read_in_order(Arc::clone(lapse), (want..self.count).collect());
-            self.ahead = Some(Ahead { from: want, next: want, waiting: None, reading });
+        let scrubbing = self.scrub.is_some() || self.timeline_scrubbing;
+        // While scrubbing, bound decoder restarts to at most one every 150 ms, even on
+        // backwards seeks. The UI never synchronously waits for old FFmpeg processes.
+        if off && (!scrubbing || self.began.elapsed() >= Duration::from_millis(150)) {
+            let wanted = playback_window(want, self.count, self.speed);
+            let until = wanted.last().map_or(want.saturating_add(1), |last| last.saturating_add(1));
+            let reading = read_in_order(Arc::clone(lapse), wanted);
+            self.ahead = Some(Ahead { from: want, next: want, until, stride: self.speed, waiting: None, reading });
             self.began = Instant::now();
         }
         ctx.request_repaint_after(Duration::from_millis(16));
@@ -745,7 +810,7 @@ impl TimeLapsePlayer {
             if i < want {
                 continue;
             }
-            if i > want && self.scrub.is_some() {
+            if i > want && scrubbing {
                 ahead.waiting = Some((i, frame));
                 break;
             }
@@ -754,15 +819,17 @@ impl TimeLapsePlayer {
             let image =
                 egui::ColorImage::from_rgba_unmultiplied([frame.width as usize, frame.height as usize], &frame.rgba);
             self.shown = Some((i, ctx.load_texture("time-lapse", image, egui::TextureOptions::LINEAR)));
-            self.ever_shown = true;
             break;
         }
-        // every frame read, none ever shown: say why rather than leave the grid blank
-        if !self.ever_shown
-            && let Some(ahead) = &self.ahead
+        // No more frames will arrive at the requested position. Stop instead of repeatedly
+        // restarting an exhausted/truncated clip (including after a previous frame was shown).
+        if let Some(ahead) = &self.ahead
             && ahead.reading.state().finished
+            && ahead.waiting.is_none()
+            && self.shown.as_ref().is_none_or(|(i, _)| *i != self.index)
         {
             self.unavailable = Some(problem_message(ahead.reading.state().problem.as_deref()));
+            self.playing = false;
             self.ahead = None;
             ctx.request_repaint();
         }
@@ -771,16 +838,35 @@ impl TimeLapsePlayer {
     /// True when Done was tapped (or Escape).
     pub(crate) fn show(&mut self, ctx: &egui::Context, look: &mut Look) -> bool {
         let screen = ctx.content_rect();
-        // play, frame by frame, until the end or a scrub: on once it's time and the frame shown
-        // has come
-        let step = Duration::from_millis(1000 / u64::from(TIME_LAPSE_FPS));
         let caught_up = self.shown.as_ref().is_some_and(|(i, _)| *i == self.index);
-        if self.scrub.is_none() && self.index + 1 < self.count && caught_up {
-            if self.stepped.elapsed() >= step {
-                self.index += 1;
-                self.stepped = Instant::now();
-            }
+        let step = Duration::from_secs_f64(1.0 / f64::from(TIME_LAPSE_FPS));
+        self.advance(caught_up, self.stepped.elapsed());
+        if self.playing && self.scrub.is_none() && !self.timeline_scrubbing {
             ctx.request_repaint_after(step.saturating_sub(self.stepped.elapsed()));
+        }
+        let keyboard = ctx.input(|i| {
+            (
+                i.key_pressed(egui::Key::Space),
+                i.key_pressed(egui::Key::ArrowLeft),
+                i.key_pressed(egui::Key::ArrowRight),
+                i.key_pressed(egui::Key::Home),
+                i.key_pressed(egui::Key::End),
+            )
+        });
+        if keyboard.0 {
+            self.toggle_playback();
+        }
+        if keyboard.1 {
+            self.jump_seconds(-5);
+        }
+        if keyboard.2 {
+            self.jump_seconds(5);
+        }
+        if keyboard.3 {
+            self.seek(0);
+        }
+        if keyboard.4 {
+            self.seek(self.count.saturating_sub(1));
         }
         let lapse = self.lapse.clone();
         if let Some(lapse) = &lapse {
@@ -789,14 +875,19 @@ impl TimeLapsePlayer {
         // (under the bar with its Done, in the Foreground: in one layer order, a press on the picture
         // would raise it over the bar)
         egui::Area::new(Id::unique("time-lapse replay")).fixed_pos(screen.min).order(Order::Middle).show(ctx, |ui| {
-            let response = ui.allocate_rect(screen, Sense::click_and_drag());
+            ui.allocate_rect(screen, Sense::hover());
             ui.painter().rect_filled(screen, 0, argb(REPLAY_FILL));
             surround_grid(ui, screen);
+            let stage = Rect::from_min_max(
+                pos2(screen.left(), screen.top() + tool_header::HEIGHT),
+                pos2(screen.right(), (screen.bottom() - 116.0).max(screen.top() + tool_header::HEIGHT)),
+            );
+            let response = ui.interact(stage, ui.scope_id().with("replay stage scrub"), Sense::click_and_drag());
             if let Some((_, t)) = &self.shown {
-                // edge to edge, under the header
+                // Fit the whole recording above the transport instead of cropping it behind UI.
                 let [w, h] = t.size().map(|v| v.max(1) as f32);
-                let k = (screen.width() / w).min(screen.height() / h);
-                let picture = Rect::from_center_size(screen.center(), vec2(w * k, h * k));
+                let k = (stage.width() / w).min(stage.height() / h);
+                let picture = Rect::from_center_size(stage.center(), vec2(w * k, h * k));
                 ui.painter().image(t.id(), picture, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
             }
             if let Some(message) = self.message() {
@@ -805,7 +896,7 @@ impl TimeLapsePlayer {
                 } else {
                     text(
                         ui.painter(),
-                        screen.center(),
+                        stage.center(),
                         Align2::CENTER_CENTER,
                         message,
                         17.0,
@@ -822,21 +913,15 @@ impl TimeLapsePlayer {
             if let (Some((start, from)), Some(p)) = (self.scrub, response.interact_pointer_pos())
                 && response.dragged()
             {
-                let moved = (p.x - start) / screen.width();
+                let moved = (p.x - start) / stage.width().max(1.0);
                 let to = from as f32 + (moved * self.count as f32).trunc();
-                self.index = to.clamp(0.0, self.count.saturating_sub(1) as f32) as u32;
+                self.seek(to.clamp(0.0, self.count.saturating_sub(1) as f32) as u32);
             }
             if response.drag_stopped() {
                 self.scrub = None;
                 self.stepped = Instant::now();
             }
-            // how far it has played
-            let f = if self.count > 1 { self.index as f32 / (self.count - 1) as f32 } else { 1.0 };
-            let bar = Rect::from_min_size(
-                pos2(screen.left(), screen.top() + tool_header::HEIGHT),
-                vec2(screen.width() * f.clamp(0.0, 1.0), 4.0),
-            );
-            ui.painter().rect_filled(bar, 0, argb(PROGRESS));
+            self.transport(ui, screen);
         });
         // the time into the replay, in frames past the second
         let seconds = self.index / TIME_LAPSE_FPS;
@@ -850,6 +935,126 @@ impl TimeLapsePlayer {
         let tapped = tool_header::show_in(ctx, look, "Time-lapse Replay", &[(&time, false)], tool_header::OVER_PICTURE);
         crate::ui::escape(ctx) || tapped == Some(tool_header::Tapped::Done)
     }
+
+    /// A real timeline and transport, unlike the old decoration below the title bar.
+    fn transport(&mut self, ui: &egui::Ui, screen: Rect) {
+        let bottom = Rect::from_min_max(pos2(screen.left(), screen.bottom() - 116.0), screen.max);
+        ui.painter().rect_filled(bottom, 0.0, argb(panel::DOCK_FILL));
+        ui.painter()
+            .line_segment([bottom.left_top(), bottom.right_top()], egui::Stroke::new(1.0, argb(panel::DOCK_EDGE)));
+        let timeline = Rect::from_min_max(
+            pos2(bottom.left() + 24.0, bottom.top() + 24.0),
+            pos2(bottom.right() - 24.0, bottom.top() + 39.0),
+        );
+        let rail = Rect::from_center_size(timeline.center(), vec2(timeline.width(), 5.0));
+        ui.painter().rect_filled(rail, 3.0, argb(panel::DOCK_EDGE));
+        let fraction = if self.count > 1 { self.index as f32 / (self.count - 1) as f32 } else { 0.0 };
+        let knob = pos2(rail.left() + rail.width() * fraction, rail.center().y);
+        ui.painter().rect_filled(Rect::from_min_max(rail.min, pos2(knob.x, rail.bottom())), 3.0, argb(PROGRESS));
+        ui.painter().circle_filled(knob, 6.5, argb(pc::ACTIVE));
+        let progress = ui.interact(timeline, ui.scope_id().with("replay timeline"), Sense::click_and_drag());
+        if (progress.clicked() || progress.drag_started() || progress.dragged())
+            && let Some(p) = progress.interact_pointer_pos()
+        {
+            self.timeline_scrubbing = true;
+            self.seek(self.timeline_frame(p.x, rail));
+            ui.ctx().request_repaint();
+        }
+        if progress.drag_stopped() || !ui.input(|i| i.pointer.any_down()) {
+            self.timeline_scrubbing = false;
+        }
+
+        let center_y = bottom.top() + 80.0;
+        let action = |ui: &egui::Ui, id: &str, label: &str, x: f32, width: f32| {
+            let rect = Rect::from_center_size(pos2(x, center_y), vec2(width, 34.0));
+            let response = ui.interact(rect, ui.scope_id().with(id), Sense::click());
+            if response.hovered() {
+                ui.painter().rect_filled(rect, 8.0, argb(pc::ACTIVE).gamma_multiply(0.24));
+            }
+            text(ui.painter(), rect.center(), Align2::CENTER_CENTER, label, 14.0, Weight::SemiBold, argb(pc::BAR_TEXT));
+            response.clicked()
+        };
+        if action(ui, "replay backward", "-5s", bottom.left() + 44.0, 55.0) {
+            self.jump_seconds(-5);
+        }
+        if action(ui, "replay toggle", if self.playing { "Pause" } else { "Play" }, bottom.left() + 120.0, 80.0) {
+            self.toggle_playback();
+        }
+        if action(ui, "replay forward", "+5s", bottom.left() + 196.0, 55.0) {
+            self.jump_seconds(5);
+        }
+
+        let duration = self.count.saturating_sub(1) / TIME_LAPSE_FPS;
+        let current = self.index / TIME_LAPSE_FPS;
+        let clock = format!("{} / {}", playback_clock(current), playback_clock(duration));
+        if bottom.width() >= 680.0 {
+            text(
+                ui.painter(),
+                pos2(bottom.left() + 248.0, center_y),
+                Align2::LEFT_CENTER,
+                &clock,
+                12.5,
+                Weight::Medium,
+                argb(EMPTY_INK),
+            );
+        }
+        // Keep the transport functional in small windows: a single cycling speed button
+        // replaces the five choices without overlapping the seek controls.
+        let narrow = bottom.width() < 540.0;
+        let speed_width = 44.0;
+        let speeds: &[u32] = if narrow { &[1] } else { &[1, 2, 4, 8, 16] };
+        for (n, &speed) in speeds.iter().enumerate() {
+            let x = bottom.right() - 24.0 - (speeds.len() - 1 - n) as f32 * (speed_width + 4.0) - speed_width / 2.0;
+            let rect = Rect::from_center_size(pos2(x, center_y), vec2(speed_width, 34.0));
+            let response = ui
+                .interact(rect, ui.scope_id().with(("replay speed", speed)), Sense::click())
+                .on_hover_text(if narrow { "Click to change playback speed" } else { "Playback speed" });
+            let display_speed = if narrow { self.speed } else { speed };
+            let selected = self.speed == speed;
+            if selected || narrow || response.hovered() {
+                ui.painter().rect_filled(rect, 8.0, if selected { argb(pc::ACTIVE) } else { argb(panel::DOCK_EDGE) });
+            }
+            text(
+                ui.painter(),
+                rect.center(),
+                Align2::CENTER_CENTER,
+                &format!("{display_speed}x"),
+                13.0,
+                Weight::SemiBold,
+                if selected || narrow { argb(pc::ACCENT_INK) } else { argb(pc::BAR_TEXT) },
+            );
+            if response.clicked() {
+                self.speed = if narrow {
+                    match self.speed {
+                        1 => 2,
+                        2 => 4,
+                        4 => 8,
+                        8 => 16,
+                        _ => 1,
+                    }
+                } else {
+                    speed
+                };
+                self.stepped = Instant::now();
+            }
+        }
+    }
+}
+
+fn playback_clock(seconds: u32) -> String {
+    if seconds >= 3600 {
+        format!("{:02}:{:02}:{:02}", seconds / 3600, seconds / 60 % 60, seconds % 60)
+    } else {
+        format!("{:02}:{:02}", seconds / 60, seconds % 60)
+    }
+}
+
+/// Request only the frames that will actually be displayed at the chosen speed.
+/// The background reader still decodes video internally but does not send discarded RGBA frames
+/// to the UI; each window uses at most four seconds' worth of output images.
+fn playback_window(start: u32, count: u32, speed: u32) -> Vec<u32> {
+    let speed = speed.clamp(1, 16);
+    (0..TIME_LAPSE_FPS * 4).map(|i| start.saturating_add(i.saturating_mul(speed))).take_while(|&i| i < count).collect()
 }
 
 /// What a player with no frame to show says: the encoder's own words when it isn't there, else
@@ -901,6 +1106,103 @@ mod tests {
     use egui::{Event, Modifiers, RawInput, Rect, pos2, vec2};
 
     use super::*;
+
+    #[test]
+    fn player_transport_preserves_pause_seek_and_speed() {
+        let mut player = TimeLapsePlayer::new(None);
+        player.count = TIME_LAPSE_FPS * 120;
+        player.playing = true;
+        player.speed = 16;
+        player.advance(true, Duration::from_secs(1));
+        assert_eq!(player.index, 16);
+        player.toggle_playback();
+        assert!(!player.playing);
+        player.advance(true, Duration::from_secs(10));
+        assert_eq!(player.index, 16, "pause must not advance even at 16x");
+        player.jump_seconds(-5);
+        assert_eq!(player.index, 0);
+        player.jump_seconds(5);
+        assert_eq!(player.index, TIME_LAPSE_FPS * 5);
+        player.seek(u32::MAX);
+        assert_eq!(player.index, player.count - 1);
+        player.toggle_playback();
+        assert_eq!(player.index, 0, "play from the last frame restarts");
+        assert!(player.playing);
+    }
+
+    #[test]
+    fn timeline_seek_clamps_and_clock_formats_long_recordings() {
+        let mut player = TimeLapsePlayer::new(None);
+        player.count = 101;
+        let bar = Rect::from_min_size(pos2(20.0, 20.0), vec2(400.0, 15.0));
+        assert_eq!(player.timeline_frame(-100.0, bar), 0);
+        assert_eq!(player.timeline_frame(220.0, bar), 50);
+        assert_eq!(player.timeline_frame(1000.0, bar), 100);
+        player.count = 0;
+        assert_eq!(player.timeline_frame(220.0, bar), 0);
+        assert_eq!(playback_clock(65), "01:05");
+        assert_eq!(playback_clock(3601), "01:00:01");
+    }
+
+    #[test]
+    fn accelerated_reader_only_requests_displayed_frames_and_stays_bounded() {
+        assert_eq!(playback_window(5, 100, 1), (5..100).collect::<Vec<_>>());
+        assert_eq!(playback_window(5, 100, 4), (5..100).step_by(4).collect::<Vec<_>>());
+        assert_eq!(playback_window(5, 100, 16), vec![5, 21, 37, 53, 69, 85]);
+        assert_eq!(playback_window(100, 100, 16), Vec::<u32>::new());
+        assert_eq!(playback_window(0, 1_000_000, 16).len(), (TIME_LAPSE_FPS * 4) as usize);
+    }
+
+    #[test]
+    fn clickable_timeline_and_transport_act_without_closing_the_player() {
+        let (ctx, mut look) = (egui::Context::default(), Look::default());
+        crate::look::install_fonts(&ctx);
+        let mut player = TimeLapsePlayer::new(None);
+        player.count = 300;
+        player.playing = false;
+        let mut time = 0.0;
+        // The very first egui frame registers widgets; input hit-testing uses their
+        // positions from the preceding frame, just as the gallery click tests do.
+        frame(&mut player, &ctx, &mut look, Vec::new(), &mut time);
+        frame(&mut player, &ctx, &mut look, Vec::new(), &mut time);
+        let mut click = |at: egui::Pos2, player: &mut TimeLapsePlayer| {
+            let mut closed = frame(player, &ctx, &mut look, vec![Event::PointerMoved(at)], &mut time);
+            closed |= frame(
+                player,
+                &ctx,
+                &mut look,
+                vec![Event::PointerButton {
+                    pos: at,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Modifiers::NONE,
+                }],
+                &mut time,
+            );
+            closed |= frame(
+                player,
+                &ctx,
+                &mut look,
+                vec![Event::PointerButton {
+                    pos: at,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: Modifiers::NONE,
+                }],
+                &mut time,
+            );
+            assert!(!closed, "the transport click closed the replay");
+        };
+        // At 800 × 600 the timeline runs from x=24 to 776, y=515.5.
+        click(pos2(400.0, 515.5), &mut player);
+        assert_eq!(player.index, 150, "timeline click should seek to its midpoint");
+        click(pos2(120.0, 564.0), &mut player);
+        assert!(player.playing, "Play should resume playback");
+        click(pos2(584.0, 564.0), &mut player);
+        assert_eq!(player.speed, 1, "the first speed remains selected");
+        click(pos2(776.0 - 22.0, 564.0), &mut player);
+        assert_eq!(player.speed, 16, "the last speed selects 16×");
+    }
 
     /// A directory of its own for a test, under the system's temporary directory (the build sets
     /// it inside the HDD), made unique by the process and the clock.
@@ -1025,7 +1327,7 @@ mod tests {
         assert!(shows(&mut player, 1), "playback moves to frame 1");
         // the drag is held back at the start: the index is 0 while frame 1 is still shown
         player.scrub = Some((0.0, 1));
-        player.index = 0;
+        player.seek(0);
         assert!(shows(&mut player, 0), "seeking back to a frame already shown shows it again");
         std::fs::remove_dir_all(&root).unwrap();
     }
