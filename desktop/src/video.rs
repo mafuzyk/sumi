@@ -619,6 +619,33 @@ pub fn read_frames(path: &Path, mut each: impl FnMut(Vec<u8>, u32, u32, f64) -> 
     }
 }
 
+/// Read frames for a replay that may be cancelled while the decoder is blocked.
+/// On Linux both ffprobe and ffmpeg are killed promptly, even in the middle of a raw RGBA frame.
+pub fn read_frames_cancelable(
+    path: &Path,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    mut each: impl FnMut(Vec<u8>, u32, u32, f64) -> bool,
+) -> Result<u32, String> {
+    // An old player may be dropped and immediately replaced. Serialize all replay video
+    // decoders across players as well as inside each player's retirement handshake.
+    // Lock only on worker threads; the UI never waits for this permit.
+    static REPLAY_DECODER: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _decoder_permit = REPLAY_DECODER.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if stop.load(std::sync::atomic::Ordering::Acquire) {
+        return Ok(0);
+    }
+    #[cfg(any(windows, target_os = "macos"))]
+    {
+        use std::sync::atomic::Ordering;
+        system::read(path, &mut |rgba, w, h, at| !stop.load(Ordering::Acquire) && each(rgba, w, h, at))
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        ffmpeg::read_with_stop(path, Some(stop), &mut each)
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 /// `count` frames as an MP4 at `out`, H.264 (or HEVC) at `fps` frames a second (to a thousandth),
 /// the picture `width` × `height` fitted to `max_side`; `frame(i, w, h)` gives frame `i` as
@@ -675,7 +702,11 @@ pub fn write_mp4(
 mod ffmpeg {
     use std::io::{ErrorKind, Read, Write};
     use std::path::Path;
-    use std::process::{Command, Stdio};
+    use std::process::{Child, ChildStdout, Command, ExitStatus, Stdio};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex};
+    use std::thread::{self, JoinHandle};
+    use std::time::Duration;
 
     /// ffmpeg (or ffprobe) to run, its output to read; [`super::NO_FFMPEG`] if it isn't there.
     fn run(program: &str) -> Command {
@@ -686,6 +717,86 @@ mod ffmpeg {
 
     fn missing(e: &std::io::Error) -> String {
         if e.kind() == ErrorKind::NotFound { super::NO_FFMPEG.to_owned() } else { e.to_string() }
+    }
+
+    /// Keeps a subprocess killable from a separate thread while its stdout is blocked.
+    /// Holding a Child mutex across read_exact or wait would prevent cancellation.
+    struct CancelableChild {
+        child: Arc<Mutex<Child>>,
+        finished: Arc<AtomicBool>,
+        watcher: Option<JoinHandle<()>>,
+        reaped: bool,
+    }
+
+    impl CancelableChild {
+        fn new(child: Child, cancel: Option<Arc<AtomicBool>>) -> Self {
+            let child = Arc::new(Mutex::new(child));
+            let finished = Arc::new(AtomicBool::new(false));
+            let watcher = cancel.map(|cancel| {
+                let child = Arc::clone(&child);
+                let finished = Arc::clone(&finished);
+                thread::spawn(move || {
+                    while !cancel.load(Ordering::Acquire) && !finished.load(Ordering::Acquire) {
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    if cancel.load(Ordering::Acquire)
+                        && !finished.load(Ordering::Acquire)
+                        && let Ok(mut child) = child.lock()
+                    {
+                        let _ = child.kill();
+                    }
+                })
+            });
+            Self { child, finished, watcher, reaped: false }
+        }
+
+        fn stdout(&self) -> Result<ChildStdout, String> {
+            self.child
+                .lock()
+                .map_err(|_| "video process lock poisoned")?
+                .stdout
+                .take()
+                .ok_or("video has no output".into())
+        }
+
+        fn kill(&self) {
+            if let Ok(mut child) = self.child.lock() {
+                let _ = child.kill();
+            }
+        }
+
+        fn wait(mut self) -> Result<ExitStatus, String> {
+            // Use try_wait: the cancellation watcher must be free to acquire the child and kill it.
+            loop {
+                let status = self
+                    .child
+                    .lock()
+                    .map_err(|_| "video process lock poisoned")?
+                    .try_wait()
+                    .map_err(|e| e.to_string())?;
+                if let Some(status) = status {
+                    self.reaped = true;
+                    self.finished.store(true, Ordering::Release);
+                    return Ok(status);
+                }
+                thread::sleep(Duration::from_millis(5));
+            }
+        }
+    }
+
+    impl Drop for CancelableChild {
+        fn drop(&mut self) {
+            if !self.reaped
+                && let Ok(mut child) = self.child.lock()
+            {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+            self.finished.store(true, Ordering::Release);
+            if let Some(watcher) = self.watcher.take() {
+                let _ = watcher.join();
+            }
+        }
     }
 
     /// An encoder: what goes before the input (a device to open), the encoder, and the filter
@@ -794,12 +905,44 @@ mod ffmpeg {
     /// The video at `path` frame by frame: `each(rgba, width, height, seconds)`, straight RGBA,
     /// until it says to stop (false); how many frames it was given.
     pub fn read(path: &Path, each: &mut dyn FnMut(Vec<u8>, u32, u32, f64) -> bool) -> Result<u32, String> {
-        let probe = run("ffprobe")
-            .args(["-select_streams", "v:0", "-show_entries", "stream=width,height,avg_frame_rate", "-of", "csv=p=0"])
-            .arg(path)
-            .output()
-            .map_err(|e| missing(&e))?;
-        let text = String::from_utf8_lossy(&probe.stdout);
+        read_with_stop(path, None, each)
+    }
+
+    pub fn read_with_stop(
+        path: &Path,
+        stop: Option<Arc<AtomicBool>>,
+        each: &mut dyn FnMut(Vec<u8>, u32, u32, f64) -> bool,
+    ) -> Result<u32, String> {
+        let cancelled = || stop.as_ref().is_some_and(|flag| flag.load(Ordering::Acquire));
+        if cancelled() {
+            return Ok(0);
+        }
+        let probe = CancelableChild::new(
+            run("ffprobe")
+                .args([
+                    "-select_streams",
+                    "v:0",
+                    "-show_entries",
+                    "stream=width,height,avg_frame_rate",
+                    "-of",
+                    "csv=p=0",
+                ])
+                .arg(path)
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn()
+                .map_err(|e| missing(&e))?,
+            stop.clone(),
+        );
+        let mut bytes = Vec::new();
+        let probe_read = probe.stdout()?.read_to_end(&mut bytes);
+        let _ = probe.wait();
+        if cancelled() {
+            return Ok(0);
+        }
+        probe_read.map_err(|e| e.to_string())?;
+        let text = String::from_utf8_lossy(&bytes);
         let mut fields = text.trim().split(',');
         let mut number = || fields.next().map(str::trim).unwrap_or("");
         let (width, height): (u32, u32) =
@@ -810,34 +953,51 @@ mod ffmpeg {
             let (n, d) = (n.parse::<f64>().unwrap_or(0.0), d.parse::<f64>().unwrap_or(1.0));
             if n > 0.0 && d > 0.0 { n / d } else { 30.0 }
         };
-        let mut child = run("ffmpeg")
-            .arg("-i")
-            .arg(path)
-            .args(["-f", "rawvideo", "-pix_fmt", "rgba", "-"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|e| missing(&e))?;
-        let mut output = child.stdout.take().ok_or("ffmpeg gave no output")?;
-        let size = width as usize * height as usize * 4;
+        if cancelled() {
+            return Ok(0);
+        }
+        let child = CancelableChild::new(
+            run("ffmpeg")
+                .arg("-i")
+                .arg(path)
+                .args(["-f", "rawvideo", "-pix_fmt", "rgba", "-"])
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn()
+                .map_err(|e| missing(&e))?,
+            stop.clone(),
+        );
+        let mut output = child.stdout()?;
+        let size = (width as usize)
+            .checked_mul(height as usize)
+            .and_then(|n| n.checked_mul(4))
+            .ok_or("invalid video dimensions")?;
         let mut count = 0u32;
-        loop {
+        while !cancelled() {
             let mut rgba = vec![0u8; size];
             match output.read_exact(&mut rgba) {
                 Ok(()) => {
+                    if cancelled() {
+                        break;
+                    }
                     count += 1;
                     if !each(rgba, width, height, f64::from(count - 1) / fps) {
-                        let _ = child.kill();
+                        child.kill();
                         break;
                     }
                 }
+                Err(_) if cancelled() => break,
                 Err(e) if e.kind() == ErrorKind::UnexpectedEof => break,
                 Err(e) => {
-                    let _ = child.kill();
+                    child.kill();
                     return Err(e.to_string());
                 }
             }
+        }
+        drop(output);
+        if cancelled() {
+            child.kill();
         }
         let _ = child.wait();
         Ok(count)
@@ -845,6 +1005,43 @@ mod ffmpeg {
 
     #[cfg(test)]
     mod tests {
+        #[cfg(unix)]
+        #[test]
+        fn cancelling_a_process_interrupts_an_incomplete_raw_frame() {
+            use std::io::Read;
+            use std::process::{Command, Stdio};
+            use std::sync::atomic::{AtomicBool, Ordering};
+            use std::sync::{Arc, mpsc};
+            use std::time::Duration;
+
+            // Behaves like ffmpeg after sending just part of a large RGBA frame.
+            // `exec` makes the sleeping process itself the subprocess being watched.
+            let child = Command::new("sh")
+                .args(["-c", "printf 'partial'; exec sleep 30"])
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn()
+                .expect("spawn an incomplete-frame producer");
+            let stop = Arc::new(AtomicBool::new(false));
+            let (tx, rx) = mpsc::sync_channel(1);
+            let stop_for_reader = Arc::clone(&stop);
+            std::thread::spawn(move || {
+                let process = super::CancelableChild::new(child, Some(stop_for_reader));
+                let mut output = process.stdout().expect("read subprocess stdout");
+                let mut full_rgba = [0u8; 4096];
+                let read = output.read_exact(&mut full_rgba);
+                drop(output);
+                let _ = process.wait();
+                let _ = tx.send(read.is_err());
+            });
+            std::thread::sleep(Duration::from_millis(50));
+            stop.store(true, Ordering::Release);
+            let interrupted =
+                rx.recv_timeout(Duration::from_secs(2)).expect("cancellation should unblock a partial frame");
+            assert!(interrupted, "an incomplete frame should not be delivered as valid");
+        }
+
         /// The encoder picked for a time-lapse video here (the GPU's where there is one).
         #[test]
         #[ignore = "says which encoder this machine has"]

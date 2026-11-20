@@ -3,6 +3,8 @@
 //! video made of it (full length or 30 seconds) with the system's encoder.
 
 use std::path::PathBuf;
+#[cfg(test)]
+use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, TryRecvError, channel, sync_channel};
 use std::sync::{Arc, LazyLock, Mutex};
@@ -244,7 +246,12 @@ It can't be brought back."
         std::thread::spawn(move || {
             let made = (|| {
                 let picks = time_lapse_picks(lapse.count(), seconds);
-                let frames = read_in_order(Arc::clone(&lapse), picks.clone());
+                let frames = read_in_order(
+                    Arc::clone(&lapse),
+                    picks.clone(),
+                    #[cfg(test)]
+                    None,
+                );
                 let (_, first) = frames.recv().map_err(|_| "the first frame can't be read")?;
                 let (width, height) = (first.width, first.height);
                 let last = std::cell::RefCell::new(Some(first));
@@ -435,6 +442,44 @@ struct Reading {
     _stops: Stops,
 }
 
+/// Cancelled reader without its receiver (which could block a full send queue).
+/// Its worker must finish, including reaping the video decoder, before a new one starts.
+struct RetiringReader(Arc<Mutex<ReadState>>);
+
+impl RetiringReader {
+    fn finished(&self) -> bool {
+        self.0.lock().is_ok_and(|state| state.finished)
+    }
+}
+
+#[cfg(test)]
+#[derive(Default)]
+struct ReaderMetrics {
+    active: AtomicUsize,
+    peak: AtomicUsize,
+    started: AtomicUsize,
+}
+
+#[cfg(test)]
+struct ActiveReader(Arc<ReaderMetrics>);
+
+#[cfg(test)]
+impl ActiveReader {
+    fn new(metrics: Arc<ReaderMetrics>) -> Self {
+        let active = metrics.active.fetch_add(1, Ordering::SeqCst) + 1;
+        metrics.peak.fetch_max(active, Ordering::SeqCst);
+        metrics.started.fetch_add(1, Ordering::SeqCst);
+        Self(metrics)
+    }
+}
+
+#[cfg(test)]
+impl Drop for ActiveReader {
+    fn drop(&mut self) {
+        self.0.active.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 impl Reading {
     fn recv(&self) -> Result<(u32, ThumbnailImage), std::sync::mpsc::RecvError> {
         self.frames.recv()
@@ -446,6 +491,13 @@ impl Reading {
             Ok(state) => ReadState { finished: state.finished, problem: state.problem.clone() },
             Err(_) => ReadState { finished: true, problem: Some("the frames' reader stopped".into()) },
         }
+    }
+
+    fn retire(self) -> RetiringReader {
+        let state = Arc::clone(&self.state);
+        // Dropping Stops sets the stop flag; dropping the receiver wakes a blocked send.
+        drop(self);
+        RetiringReader(state)
     }
 }
 
@@ -473,7 +525,7 @@ fn note_problem(state: &Arc<Mutex<ReadState>>, problem: String) {
 /// thread a few ahead: from its videos (decoded as they come, the artwork file's way of keeping them)
 /// and its pictures. A frame that can't be read is left out; what was left out is in [`Reading`]'s
 /// state. It stops once it is dropped or nothing takes them.
-fn read_in_order(lapse: Arc<TimeLapse>, wanted: Vec<u32>) -> Reading {
+fn read_in_order(lapse: Arc<TimeLapse>, wanted: Vec<u32>, #[cfg(test)] metrics: Option<Arc<ReaderMetrics>>) -> Reading {
     let (tx, rx) = sync_channel(4);
     let state = Arc::new(Mutex::new(ReadState::default()));
     let shared = Arc::clone(&state);
@@ -481,6 +533,8 @@ fn read_in_order(lapse: Arc<TimeLapse>, wanted: Vec<u32>) -> Reading {
     let stops = Stops(Arc::clone(&stop));
     std::thread::spawn(move || {
         let _finished = Finished(Arc::clone(&shared));
+        #[cfg(test)]
+        let _active = metrics.map(ActiveReader::new);
         let clips = lapse.clips();
         let mut next = 0usize;
         while let Some(&i) = wanted.get(next) {
@@ -501,18 +555,22 @@ fn read_in_order(lapse: Arc<TimeLapse>, wanted: Vec<u32>) -> Reading {
             };
             let end = clip.first + clip.frames;
             let (mut at, mut gone) = (clip.first, false);
-            let read = crate::video::read_frames(std::path::Path::new(&clip.path), |rgba, width, height, _| {
-                let here = at;
-                at += 1;
-                if wanted.get(next) == Some(&here) {
-                    next += 1;
-                    if tx.send((here, ThumbnailImage { width, height, rgba })).is_err() {
-                        gone = true;
-                        return false;
+            let read = crate::video::read_frames_cancelable(
+                std::path::Path::new(&clip.path),
+                Arc::clone(&stop),
+                |rgba, width, height, _| {
+                    let here = at;
+                    at += 1;
+                    if wanted.get(next) == Some(&here) {
+                        next += 1;
+                        if tx.send((here, ThumbnailImage { width, height, rgba })).is_err() {
+                            gone = true;
+                            return false;
+                        }
                     }
-                }
-                !stop.load(Ordering::Relaxed) && wanted.get(next).is_some_and(|&n| n < end)
-            });
+                    !stop.load(Ordering::Relaxed) && wanted.get(next).is_some_and(|&n| n < end)
+                },
+            );
             if gone {
                 return;
             }
@@ -660,6 +718,11 @@ pub(crate) struct TimeLapsePlayer {
     /// The frames from one on, read ahead (from its videos, decoded as they come), and when it
     /// last began again elsewhere.
     ahead: Option<Ahead>,
+    /// A stopped reader remains here until its worker and any decoder have exited.
+    /// We never start another reader while this is unfinished.
+    retiring: Option<RetiringReader>,
+    #[cfg(test)]
+    reader_metrics: Arc<ReaderMetrics>,
     began: Instant,
     /// The time-lapse it replays, if there is one (none: nothing recorded yet).
     lapse: Option<Arc<TimeLapse>>,
@@ -678,6 +741,22 @@ struct Ahead {
     reading: Reading,
 }
 
+impl Ahead {
+    fn can_serve(&self, from: u32, to: u32, stride: u32) -> bool {
+        // The reader has consumed everything before `next`, except a frame kept in waiting.
+        // It can still deliver a later in-window frame without another decoder.
+        let earliest = self.waiting.as_ref().map_or(self.next, |(i, _)| *i);
+        to >= from
+            && to >= self.from
+            && to >= earliest
+            && to < self.until
+            && self.stride == stride
+            // A 16x reader contains 0,16,32,..., not arbitrary frames between them.
+            // A timeline seek to an unrequested frame needs a new window anchored there.
+            && (to - self.from) % stride.max(1) == 0
+    }
+}
+
 impl TimeLapsePlayer {
     /// A player of `lapse`'s frames; none, nothing recorded yet.
     pub(crate) fn new(lapse: Option<Arc<TimeLapse>>) -> TimeLapsePlayer {
@@ -692,6 +771,9 @@ impl TimeLapsePlayer {
             scrub: None,
             shown: None,
             ahead: None,
+            retiring: None,
+            #[cfg(test)]
+            reader_metrics: Arc::new(ReaderMetrics::default()),
             began: Instant::now(),
             lapse: lapse.filter(|_| count > 0),
             unavailable: None,
@@ -724,14 +806,20 @@ impl TimeLapsePlayer {
     fn seek(&mut self, frame: u32) {
         let next = frame.min(self.count.saturating_sub(1));
         if next != self.index {
-            // A reader may already have consumed this frame and be holding a later one.
-            // Reusing it after a seek can leave replay stuck forever on that later frame.
-            // Dropping the reader cancels its background decoding without blocking UI.
-            self.ahead = None;
+            if self.ahead.as_ref().is_some_and(|a| !a.can_serve(self.index, next, self.speed)) {
+                self.retire_active();
+            }
             self.unavailable = None;
         }
         self.index = next;
         self.stepped = Instant::now();
+    }
+
+    fn retire_active(&mut self) {
+        if let Some(ahead) = self.ahead.take() {
+            debug_assert!(self.retiring.is_none(), "a replacement cannot start before cancellation finishes");
+            self.retiring = Some(ahead.reading.retire());
+        }
     }
 
     fn jump_seconds(&mut self, seconds: i32) {
@@ -777,29 +865,34 @@ impl TimeLapsePlayer {
         if self.unavailable.is_some() {
             return;
         }
+        if self.retiring.as_ref().is_some_and(RetiringReader::finished) {
+            self.retiring = None;
+        }
         let want = self.index;
         if self.shown.as_ref().is_some_and(|(i, _)| *i == want) {
             return;
         }
-        let shown = self.shown.as_ref().map(|(i, _)| *i);
-        // scrubbed back past the frame shown, to one this read has already gone by: read it again
-        let behind = shown.is_some_and(|shown| want < shown);
-        let off = self.ahead.as_ref().is_none_or(|a| {
-            want < a.from
-                || want >= a.until
-                || want > a.next.saturating_add(TIME_LAPSE_FPS)
-                // A held future frame cannot satisfy a backward seek. Even with `waiting`
-                // populated we must restart the reader once the scrub throttle allows it.
-                || (behind && a.next > want && a.from != want)
-                || a.stride != self.speed
-        });
+        // Playback changes speed without a seek; invalidate its previous stride here.
+        if self.ahead.as_ref().is_some_and(|a| !a.can_serve(want, want, self.speed)) {
+            self.retire_active();
+        }
         let scrubbing = self.scrub.is_some() || self.timeline_scrubbing;
-        // While scrubbing, bound decoder restarts to at most one every 150 ms, even on
-        // backwards seeks. The UI never synchronously waits for old FFmpeg processes.
-        if off && (!scrubbing || self.began.elapsed() >= Duration::from_millis(150)) {
+        // Cancelled video decoders must exit (including ffprobe) before the next can start.
+        // This remains async for the UI even if the old decode was blocked mid-RGBA frame.
+        if self.retiring.is_some() {
+            ctx.request_repaint_after(Duration::from_millis(16));
+            return;
+        }
+        // While dragging, throttle only new readers, not seeks the active reader can serve.
+        if self.ahead.is_none() && (!scrubbing || self.began.elapsed() >= Duration::from_millis(150)) {
             let wanted = playback_window(want, self.count, self.speed);
             let until = wanted.last().map_or(want.saturating_add(1), |last| last.saturating_add(1));
-            let reading = read_in_order(Arc::clone(lapse), wanted);
+            let reading = read_in_order(
+                Arc::clone(lapse),
+                wanted,
+                #[cfg(test)]
+                Some(Arc::clone(&self.reader_metrics)),
+            );
             self.ahead = Some(Ahead { from: want, next: want, until, stride: self.speed, waiting: None, reading });
             self.began = Instant::now();
         }
@@ -830,7 +923,7 @@ impl TimeLapsePlayer {
         {
             self.unavailable = Some(problem_message(ahead.reading.state().problem.as_deref()));
             self.playing = false;
-            self.ahead = None;
+            self.retire_active();
             ctx.request_repaint();
         }
     }
@@ -1333,6 +1426,168 @@ mod tests {
     }
 
     #[test]
+    fn consecutive_forward_scrubs_reuse_reader_and_cancel_before_replacement() {
+        let root = scratch("forward-reader-lifetime");
+        let art = root.join("artwork");
+        let lapse_dir = art.join("timelapse");
+        std::fs::create_dir_all(&lapse_dir).unwrap();
+        for i in 0..150 {
+            write_jpeg_colour(&lapse_dir.join(format!("frame-{i:06}.jpg")), [i as u8, 32, 240]);
+        }
+        let lapse = TimeLapse::new(art.to_string_lossy().into_owned());
+        let mut player = TimeLapsePlayer::new(Some(Arc::clone(&lapse)));
+        let metrics = Arc::clone(&player.reader_metrics);
+        let (ctx, mut look) = (egui::Context::default(), Look::default());
+        crate::look::install_fonts(&ctx);
+        let mut time = 0.0;
+        player.scrub = Some((0.0, 0));
+
+        let shows = |player: &mut TimeLapsePlayer, target: u32, look: &mut Look, time: &mut f64| {
+            let deadline = Instant::now() + Duration::from_secs(3);
+            while Instant::now() < deadline {
+                frame(player, &ctx, look, Vec::new(), time);
+                if player.shown.as_ref().is_some_and(|(i, _)| *i == target) {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            panic!("frame {target} was not shown after seek");
+        };
+
+        shows(&mut player, 0, &mut look, &mut time);
+        assert_eq!(metrics.started.load(Ordering::SeqCst), 1);
+        let initial = player.reading_stop().expect("active reader");
+        // Simulate a drag across the timeline with consecutive forward seeks ~150ms apart.
+        // Even though frames are decoded ahead on a worker, these seeks all fit its window.
+        for i in 1..=12 {
+            std::thread::sleep(Duration::from_millis(150));
+            player.seek(i);
+            assert!(player.ahead.is_some(), "forward seek {i} discarded a usable reader");
+            assert!(!initial.load(Ordering::SeqCst), "in-window forward seek {i} cancelled its reader");
+            shows(&mut player, i, &mut look, &mut time);
+            assert_eq!(metrics.started.load(Ordering::SeqCst), 1, "forward seek {i} created a new decoder");
+        }
+
+        // An out-of-window seek cancels the old worker, without creating a new one
+        // until the previous worker is completely done and its decoder has been reaped.
+        player.seek(140);
+        assert!(initial.load(Ordering::SeqCst), "out-of-window seek did not cancel the reader");
+        assert!(player.ahead.is_none());
+        assert!(player.retiring.is_some(), "old reader must be tracked until its full shutdown");
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while metrics.started.load(Ordering::SeqCst) == 1 && Instant::now() < deadline {
+            frame(&mut player, &ctx, &mut look, Vec::new(), &mut time);
+            assert!(metrics.peak.load(Ordering::SeqCst) <= 1);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(metrics.started.load(Ordering::SeqCst), 2, "replacement reader did not start");
+        assert_eq!(metrics.peak.load(Ordering::SeqCst), 1, "two readers were alive at the same time");
+        shows(&mut player, 140, &mut look, &mut time);
+        drop(player);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn sparse_speed_seek_restarts_for_unrequested_frame_then_reuses_aligned_frames() {
+        let root = scratch("sparse-forward-scrub");
+        let art = root.join("artwork");
+        let dir = art.join("timelapse");
+        std::fs::create_dir_all(&dir).unwrap();
+        for i in 0..48 {
+            write_jpeg_colour(&dir.join(format!("frame-{i:06}.jpg")), [i as u8, 64, 200]);
+        }
+        let lapse = TimeLapse::new(art.to_string_lossy().into_owned());
+        let mut player = TimeLapsePlayer::new(Some(lapse));
+        player.speed = 16;
+        player.playing = false;
+        player.scrub = Some((0.0, 0));
+        let metrics = Arc::clone(&player.reader_metrics);
+        let (ctx, mut look) = (egui::Context::default(), Look::default());
+        crate::look::install_fonts(&ctx);
+        let mut time = 0.0;
+        let shows = |player: &mut TimeLapsePlayer, target: u32, look: &mut Look, time: &mut f64| {
+            let deadline = Instant::now() + Duration::from_secs(3);
+            while Instant::now() < deadline {
+                frame(player, &ctx, look, Vec::new(), time);
+                if player.shown.as_ref().is_some_and(|(i, _)| *i == target) {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            panic!("frame {target} was never displayed");
+        };
+        shows(&mut player, 0, &mut look, &mut time);
+        let initial = player.reading_stop().unwrap();
+        player.seek(3);
+        assert!(initial.load(Ordering::SeqCst), "3 is not in the 0,16,32,... decoder window");
+        shows(&mut player, 3, &mut look, &mut time);
+        assert_eq!(metrics.started.load(Ordering::SeqCst), 2);
+        let second = player.reading_stop().unwrap();
+        player.seek(19);
+        assert!(!second.load(Ordering::SeqCst), "19 belongs to the 3,19,35,... decoder window");
+        shows(&mut player, 19, &mut look, &mut time);
+        assert_eq!(metrics.started.load(Ordering::SeqCst), 2);
+        assert_eq!(metrics.peak.load(Ordering::SeqCst), 1);
+        drop(player);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "requires ffmpeg and ffprobe on PATH for a real video decoder roundtrip"]
+    fn consecutive_video_scrubs_reap_ffmpeg_before_starting_the_next_reader() {
+        let root = scratch("real-video-decoder-lifetime");
+        let art = root.join("artwork");
+        let lapse = TimeLapse::new(art.to_string_lossy().into_owned());
+        for i in 0..6 {
+            assert!(lapse.record([i * 35, 55, 190, 255].repeat(16), 4, 4));
+        }
+        let plan = lapse.segment_plan().expect("segment plan for six frames");
+        let status = std::process::Command::new("ffmpeg")
+            .args(["-nostdin", "-v", "error", "-f", "lavfi", "-i", "color=c=red:s=128x128:r=30"])
+            .args(["-frames:v", "6", "-c:v", "mpeg4", "-y"])
+            .arg(&plan.path)
+            .status()
+            .expect("ffmpeg installed");
+        assert!(status.success(), "create a real segment with ffmpeg");
+        assert!(lapse.segment_made(plan, 128, 128, true).is_none());
+        assert_eq!(lapse.clips().len(), 1, "test must exercise the video decoder, not JPEG fallback");
+
+        let mut player = TimeLapsePlayer::new(Some(lapse));
+        let metrics = Arc::clone(&player.reader_metrics);
+        player.playing = false;
+        player.scrub = Some((0.0, 0));
+        let (ctx, mut look) = (egui::Context::default(), Look::default());
+        crate::look::install_fonts(&ctx);
+        let mut time = 0.0;
+        let shows = |player: &mut TimeLapsePlayer, target: u32, look: &mut Look, time: &mut f64| {
+            let deadline = Instant::now() + Duration::from_secs(6);
+            while Instant::now() < deadline {
+                frame(player, &ctx, look, Vec::new(), time);
+                if player.shown.as_ref().is_some_and(|(i, _)| *i == target) {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            panic!("video frame {target} not shown after seek");
+        };
+        shows(&mut player, 0, &mut look, &mut time);
+        for i in 1..6 {
+            player.seek(i);
+            shows(&mut player, i, &mut look, &mut time);
+        }
+        assert_eq!(metrics.started.load(Ordering::SeqCst), 1, "forward seeks reused decoder");
+        let initial = player.reading_stop().unwrap();
+        player.seek(0);
+        assert!(initial.load(Ordering::SeqCst));
+        shows(&mut player, 0, &mut look, &mut time);
+        assert_eq!(metrics.started.load(Ordering::SeqCst), 2, "backward seek starts a new decoder");
+        assert_eq!(metrics.peak.load(Ordering::SeqCst), 1, "two video readers overlapped");
+        drop(player);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn an_empty_replay_says_nothing_was_recorded_and_escape_closes_it() {
         let (ctx, mut look) = (egui::Context::default(), Look::default());
         crate::look::install_fonts(&ctx);
@@ -1694,11 +1949,12 @@ mod tests {
         let first = clips[0].frames;
         let wanted = vec![0, first - 1, first, first + 1, lapse.count() - 1];
         let started = Instant::now();
-        let got: Vec<(u32, u32, u32)> = read_in_order(Arc::clone(&lapse), wanted.clone())
-            .frames
-            .iter()
-            .map(|(i, f)| (i, f.width, f.height))
-            .collect();
+        let got: Vec<(u32, u32, u32)> =
+            read_in_order(Arc::clone(&lapse), wanted.clone(), Some(Arc::new(ReaderMetrics::default())))
+                .frames
+                .iter()
+                .map(|(i, f)| (i, f.width, f.height))
+                .collect();
         eprintln!("{got:?} in {:?}", started.elapsed());
         assert_eq!(got.iter().map(|g| g.0).collect::<Vec<_>>(), wanted);
         let _ = std::fs::remove_dir_all(&dir);
