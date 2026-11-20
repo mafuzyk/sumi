@@ -1,0 +1,76 @@
+# Binary package for Sumi (prebuilt release tarball), Arch Linux x86_64.
+# The tarball is built by CI and upstream publishes SHA256SUMS.txt with every release.
+# prepare() checks the tarball against those published sums, so no hash is pinned here.
+pkgname=sumi-bin
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Paint, draw and sketch: the Sumi desktop app (prebuilt binary)'
+arch=('x86_64')
+url='https://github.com/mafuzyk/sumi'
+license=('GPL-3.0-or-later')
+provides=('sumi')
+conflicts=('sumi')
+# The binary ships already stripped by package.sh; keep it byte-identical to the published sums.
+options=(!strip)
+# nfpm's depends, in Arch package names (libx11 covers Debian's libx11-6 + libx11-xcb1).
+depends=(
+  glibc
+  gcc-libs
+  libxkbcommon
+  libxkbcommon-x11
+  wayland
+  libx11
+  libxcb
+  libxcursor
+  libxi
+  vulkan-icd-loader
+)
+# nfpm's recommends, in Arch package names. Sumi shells out to pw-play/pw-cat, paplay/pacat
+# or aplay for Feedback Sounds and brush sounds; on Arch those tools come from these packages
+# (not from the pipewire/pulseaudio sound servers themselves).
+optdepends=(
+  'mesa: OpenGL/EGL fallback when the GPU has no Vulkan'
+  'vulkan-intel: Vulkan driver for Intel integrated GPUs'
+  'vulkan-radeon: Vulkan driver for AMD Radeon GPUs'
+  'vulkan-nouveau: Vulkan driver for NVIDIA GPUs (open-source Nouveau)'
+  'vulkan-swrast: software Vulkan driver (CPU rendering, no GPU required)'
+  'ffmpeg: time-lapse, animation and video import/export'
+  'poppler: open PDF files as frames'
+  'xdg-desktop-portal: file dialogs on Wayland'
+  'pipewire-audio: Feedback Sounds and brush sounds via pw-play/pw-cat (PipeWire)'
+  'libpulse: Feedback Sounds and brush sounds via paplay/pacat (PulseAudio client)'
+  'alsa-utils: Feedback Sounds and brush sounds via aplay (ALSA)'
+)
+source=(
+  "https://github.com/mafuzyk/sumi/releases/download/v$pkgver/sumi-$pkgver-linux-x86_64.tar.gz"
+  "https://github.com/mafuzyk/sumi/releases/download/v$pkgver/SHA256SUMS.txt"
+)
+# The tarball does not exist yet at packaging time and is built by CI, so a local hash would
+# not be meaningful; the published SHA256SUMS.txt is verified in prepare() instead.
+sha256sums=('SKIP' 'SKIP')
+
+prepare() {
+  cd "$srcdir"
+  # Upstream publishes SHA256SUMS.txt alongside each artifact. A hash pinned here would need a
+  # manual bump at every release, so verify the downloaded tarball against the published sums
+  # and fail the build on mismatch or a missing entry.
+  local line
+  line=$(grep -E "^[[:xdigit:]]{64}[[:space:]]+\\*?sumi-${pkgver//./\\.}-linux-x86_64\\.tar\\.gz$" SHA256SUMS.txt) || {
+    echo "error: no checksum for sumi-$pkgver-linux-x86_64.tar.gz in SHA256SUMS.txt" >&2
+    return 1
+  }
+  if ! printf '%s\n' "$line" | sha256sum --check; then
+    echo "error: sumi-$pkgver-linux-x86_64.tar.gz does not match the published SHA256SUMS.txt" >&2
+    return 1
+  fi
+}
+
+package() {
+  cd "$srcdir/sumi-$pkgver-linux-x86_64"
+  mkdir -p "$pkgdir"
+  # The tarball root (sumi-<version>-linux-x86_64/) holds bin/ and share/ directly, not usr/:
+  # package.sh does `cp -R "$STAGE/usr" "$WORK/tar/$BASENAME"`, which creates $BASENAME as the
+  # copy of usr/. Install from that real layout into the FHS paths.
+  install -Dm755 bin/sumi "$pkgdir/usr/bin/sumi"
+  mkdir -p "$pkgdir/usr/share" && cp -a share/. "$pkgdir/usr/share/"
+}

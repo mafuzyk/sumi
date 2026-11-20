@@ -1,0 +1,26 @@
+[package]
+name = "sumi-clip"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+description = "Reads and writes CLIP STUDIO PAINT `.clip` and Krita `.kra` documents"
+
+[lints]
+workspace = true
+
+[dependencies]
+sumi-engine = { workspace = true }
+clip-core = { workspace = true }
+thiserror = { workspace = true }
+# The `.kra` reader returns `anyhow` errors; the root of their chain is what the user is told.
+anyhow = "1"
+log = { workspace = true }
+png = { workspace = true }
+zip = { version = "2", default-features = false, features = ["deflate"] }
+# The `.kra` preflight reads `maindoc.xml` and the tile headers itself, before the reader runs.
+roxmltree = "0.20"
+# Private snapshot directories for the `.kra` preflight, and the temporary `.kra` a publish
+# renames into place.
+tempfile = "3"

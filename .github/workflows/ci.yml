@@ -1,0 +1,42 @@
+name: CI
+
+# Run for pull requests and by hand (Actions > CI > Run workflow), not on every push to main. A
+# private copy pays for each minute, so there even a pull request's run skips every job.
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_VERSION: "1.99.0"
+
+jobs:
+  rust:
+    name: Rust (format, clippy, tests)
+    if: ${{ !github.event.repository.private || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      # clip-core is vendored in this repository under crates/clip-core, so a fresh checkout resolves it.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: aarch64-apple-darwin
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      # `--all` also formats the vendored clip-core path dependency, which must stay byte-identical to upstream.
+      - run: cargo fmt --check -p sumi-engine -p sumi-gpu -p sumi-core -p sumi-clip -p sumi-bindgen -p sumi-desktop
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      # the code only macOS builds (the Mac's pen, Finder, video, PDF and fonts), checked without
+      # linking: no Mac needed
+      - name: Clippy for macOS
+        run: cargo clippy --target aarch64-apple-darwin -p sumi-desktop -- -D warnings
+      # the GPU tests skip themselves: the runner has no GPU
+      - run: cargo test --workspace

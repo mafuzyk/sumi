@@ -1,0 +1,1404 @@
+//! The artwork's time-lapse, as the Android app keeps it (canvas/TimeLapse.kt, ui/TimeLapseUi.kt):
+//! a frame recorded after each change (the core keeps them), the replay over everything, and the
+//! video made of it (full length or 30 seconds) with the system's encoder.
+
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{Receiver, TryRecvError, channel, sync_channel};
+use std::sync::{Arc, LazyLock, Mutex};
+use std::time::{Duration, Instant};
+
+use egui::{Align2, Color32, Id, Order, Rect, Sense, TextureHandle, pos2, vec2};
+use sumi_core::{
+    CanvasSession, TIME_LAPSE_FPS, ThumbnailImage, TimeLapse, time_lapse_bits_per_pixel, time_lapse_picks,
+    time_lapse_side,
+};
+
+use crate::alert::{Alert, Answer, Asking};
+use crate::icons;
+use crate::look::{Look, Themed, Weight, argb, pc, text};
+use crate::panel;
+use crate::tool_header;
+
+const REPLAY_FILL: Themed = panel::DOCK_FILL;
+const GRID_LINE: Themed = panel::DOCK_EDGE;
+const EMPTY_INK: Themed = pc::BAR_TEXT;
+const PROGRESS: Themed = pc::ACTIVE;
+
+#[derive(Default)]
+pub struct TimeLapseUi {
+    /// The time-lapse of the artwork open, and its folder.
+    lapse: Option<(String, Arc<TimeLapse>)>,
+    /// The edits last recorded, and a frame being recorded (a change meanwhile is recorded after).
+    recorded: Option<u64>,
+    recording: Option<Receiver<()>>,
+    replay: Option<TimeLapsePlayer>,
+    length: Alert,
+    /// Recording turned off with something recorded: whether to delete it.
+    purge: Alert,
+    /// The video being made, to save once made, as its card shows it; made, it waits for the card
+    /// to go before it is saved.
+    exporting: Option<(Receiver<Result<PathBuf, String>>, crate::export_card::Exporting)>,
+    card: crate::export_card::ExportCard,
+    made: Option<PathBuf>,
+}
+
+impl TimeLapseUi {
+    /// The artwork in folder `dir` (none: not kept in the gallery) is open, its edits now `edits`.
+    pub fn open(&mut self, dir: Option<&str>, edits: u64) {
+        // the artwork left: the frames it recorded made into one more video (on the GPU where it
+        // can be), off the window's thread, their pictures then gone, as the artwork file
+        // keeps a time-lapse
+        if let Some((left, _)) = self.lapse.take() {
+            package_later(left);
+        }
+        self.lapse = dir.map(|d| (d.to_owned(), TimeLapse::new(d.to_owned())));
+        // the pictures its videos hold too go, as the artwork file keeps a time-lapse: only as video
+        if let Some((dir, lapse)) = &self.lapse {
+            let (packaging, lapse) = (Packaging::start(dir), Arc::clone(lapse));
+            std::thread::spawn(move || {
+                let _packaging = packaging;
+                let gone = drop_pictures(&lapse);
+                if gone > 0 {
+                    log::info!("the time-lapse's videos hold {gone} frames: their pictures went");
+                }
+            });
+        }
+        self.recorded = Some(edits);
+        self.replay = None;
+    }
+
+    /// The frames recorded so far, and what they take on disk (bytes).
+    pub fn info(&self) -> (u32, u64) {
+        self.lapse.as_ref().map_or((0, 0), |(_, t)| (t.count(), t.bytes()))
+    }
+
+    /// The video's size, quality and codec, kept with the artwork.
+    pub fn settings(&self) -> sumi_core::TimeLapseSettings {
+        self.lapse.as_ref().map(|(_, t)| t.settings()).unwrap_or_default()
+    }
+
+    /// Whether it records changes (the Video tab's switch).
+    pub fn recording(&self) -> bool {
+        self.lapse.as_ref().is_none_or(|(_, t)| t.recording())
+    }
+
+    /// The switch goes at once; turned off with something recorded, whether to delete that is
+    /// asked.
+    pub fn set_recording(&mut self, on: bool) {
+        let Some((_, t)) = &self.lapse else { return };
+        t.set_recording(on);
+        if !on && t.count() > 0 {
+            self.purge.ask(Asking {
+                title: "Purge Video?".into(),
+                message: "The video recorded so far will be deleted.
+It can't be brought back."
+                    .into(),
+                action: "Purge".into(),
+                icon: Some(&icons::ALERT_QUESTION),
+                destructive: true,
+                extra: None,
+                first: Some("Don't Purge".into()),
+                alone: false,
+            });
+        }
+    }
+
+    /// Something has been recorded (Replay and Export need it).
+    pub fn recorded(&self) -> bool {
+        self.lapse.as_ref().is_some_and(|(_, t)| t.count() > 0)
+    }
+
+    /// The artwork changed since the last frame (and nothing is pressed on it): a picture of it
+    /// is recorded off the window's thread, one at a time while changes come.
+    pub fn record(&mut self, ctx: &egui::Context, session: &Arc<CanvasSession>, idle: bool) {
+        let Some((_, lapse)) = &self.lapse else { return };
+        if let Some(rx) = &self.recording {
+            match rx.try_recv() {
+                Err(TryRecvError::Empty) => {
+                    ctx.request_repaint_after(Duration::from_millis(50));
+                    return;
+                }
+                _ => self.recording = None,
+            }
+        }
+        let edits = session.edits();
+        if !idle || self.recorded == Some(edits) || !lapse.recording() {
+            return;
+        }
+        self.recorded = Some(edits);
+        let (tx, rx) = channel();
+        let (session, lapse) = (Arc::clone(session), Arc::clone(lapse));
+        std::thread::spawn(move || {
+            // frames as large as the video they make, private layers left out
+            let side = time_lapse_side(lapse.settings());
+            if let Some(shot) = session.time_lapse_frame(side) {
+                lapse.record(shot.rgba, shot.width, shot.height);
+            }
+            // one that couldn't be kept is told once, from the window's thread
+            if let Some(text) = lapse.take_problem() {
+                crate::files::tell_later("Can't keep the time-lapse", &text);
+            }
+            let _ = tx.send(());
+        });
+        self.recording = Some(rx);
+        ctx.request_repaint_after(Duration::from_millis(50));
+    }
+
+    /// The replay starts, over everything.
+    pub fn replay(&mut self) {
+        let lapse = self.lapse.as_ref().map(|(_, t)| Arc::clone(t));
+        self.replay = Some(TimeLapsePlayer::new(lapse));
+    }
+
+    pub fn replaying(&self) -> bool {
+        self.replay.is_some()
+    }
+
+    /// Export time-lapse video: how long, asked first.
+    pub fn ask_length(&mut self) {
+        self.length.ask(Asking {
+            title: "Video length".into(),
+            message: String::new(),
+            action: "30 Seconds".into(),
+            icon: Some(&icons::CLOCK),
+            destructive: false,
+            extra: None,
+            first: Some("Full length".into()),
+            alone: false,
+        });
+    }
+
+    /// The replay while it shows, the length alert, and a video being made (named after the
+    /// artwork's `name`); returns a message to show, if any.
+    pub fn show(&mut self, ctx: &egui::Context, look: &mut Look, name: &str) -> Option<&'static str> {
+        if let Some(replay) = self.replay.as_mut()
+            && replay.show(ctx, look)
+        {
+            self.replay = None;
+        }
+        // Purge deletes what was recorded; Don't Purge, or a tap beside it, keeps it
+        if self.purge.show(ctx, look) == Some(Answer::Action)
+            && let Some((_, t)) = &self.lapse
+        {
+            t.purge();
+            self.recorded = None;
+        }
+        let mut said = None;
+        match self.length.show(ctx, look) {
+            Some(Answer::First) => said = self.export(None, name),
+            Some(Answer::Action) => said = self.export(Some(30), name),
+            _ => {}
+        }
+        if let Some((rx, exporting)) = &self.exporting {
+            match rx.try_recv() {
+                Ok(made) => {
+                    let cancelled = exporting.cancelled();
+                    self.exporting = None;
+                    match made {
+                        Ok(path) if !cancelled => self.made = Some(path),
+                        Ok(_) => {}
+                        Err(e) if !cancelled => {
+                            log::warn!("exporting the time-lapse: {e}");
+                            said = Some(if e == crate::video::NO_FFMPEG {
+                                crate::video::NO_FFMPEG
+                            } else {
+                                "The time-lapse video couldn't be made."
+                            });
+                        }
+                        Err(_) => {}
+                    }
+                }
+                Err(_) => ctx.request_repaint_after(Duration::from_millis(100)),
+            }
+        }
+        // saved once its card has gone, as the tablet shares it
+        if self.card.show(ctx, look) == Some(crate::export_card::Ended::Made)
+            && let Some(path) = self.made.take()
+        {
+            save_as(&path);
+        }
+        said
+    }
+
+    /// The video made off the window's thread: all the frames, or `seconds` of them spread
+    /// evenly; each fitted on white into the first one's size, within the settings' side.
+    fn export(&mut self, seconds: Option<u32>, name: &str) -> Option<&'static str> {
+        let Some((_, lapse)) = &self.lapse else { return Some("There is no time-lapse to export yet.") };
+        if lapse.count() == 0 {
+            return Some("There is no time-lapse to export yet.");
+        }
+        if self.card.busy() {
+            return None;
+        }
+        let (tx, rx) = channel();
+        let lapse = Arc::clone(lapse);
+        let done = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let following = Arc::clone(&done);
+        let exporting = self.card.start(move || f32::from_bits(following.load(std::sync::atomic::Ordering::Relaxed)));
+        let told = exporting.clone();
+        let name: String = name.chars().filter(|c| c.is_alphanumeric() || " _-".contains(*c)).collect();
+        let name = if name.trim().is_empty() { "Untitled Artwork".to_owned() } else { name.trim().to_owned() };
+        // a path of its own: another export, or another video of this artwork, can't overwrite it
+        let out = crate::video::export_temp_path(&name, "mp4");
+        std::thread::spawn(move || {
+            let made = (|| {
+                let picks = time_lapse_picks(lapse.count(), seconds);
+                let frames = read_in_order(Arc::clone(&lapse), picks.clone());
+                let (_, first) = frames.recv().map_err(|_| "the first frame can't be read")?;
+                let (width, height) = (first.width, first.height);
+                let last = std::cell::RefCell::new(Some(first));
+                let settings = lapse.settings();
+                std::fs::create_dir_all(out.parent().unwrap_or(&out)).map_err(|e| e.to_string())?;
+                crate::video::write_mp4(
+                    &out,
+                    width,
+                    height,
+                    time_lapse_side(settings),
+                    TIME_LAPSE_FPS as f32,
+                    settings.hevc,
+                    time_lapse_bits_per_pixel(settings),
+                    picks.len(),
+                    |n, w, h| {
+                        // cancelled, the frames stop (and the video is not made)
+                        if told.cancelled() {
+                            return None;
+                        }
+                        let progress = n as f32 / picks.len().max(1) as f32;
+                        done.store(progress.to_bits(), std::sync::atomic::Ordering::Relaxed);
+                        // the first was read already; one that can't be read, the one before again
+                        if n > 0
+                            && let Ok((_, frame)) = frames.recv()
+                        {
+                            *last.borrow_mut() = Some(frame);
+                        }
+                        Some(on_white(last.borrow().as_ref()?, w, h))
+                    },
+                )?;
+                Ok(())
+            })();
+            // on cancel (or failure) the file is removed: never published, never left half written
+            let made = match made {
+                Ok(()) => crate::video::take_made(&out, false, told.cancelled())
+                    .map(|(path, _)| path)
+                    .ok_or_else(|| "the time-lapse video couldn't be made".to_owned()),
+                Err(e) => {
+                    let _ = crate::video::take_made(&out, true, false);
+                    Err(e)
+                }
+            };
+            told.ended(made.is_ok() && !told.cancelled());
+            let _ = tx.send(made);
+        });
+        self.exporting = Some((rx, exporting));
+        None
+    }
+}
+
+/// Whether the artwork in folder `artwork` has a time-lapse recorded, read without changing it;
+/// while its pictures are being made into videos it is not read (they may be dropped as it goes).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Recorded {
+    Yes,
+    No,
+    Packaging,
+}
+
+/// The artworks whose time-lapse is being made into videos (and whose pictures it may drop), so
+/// the gallery doesn't read one half done.
+static PACKAGING: LazyLock<Mutex<std::collections::HashMap<String, usize>>> =
+    LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
+
+/// One artwork's packaging, marked while it lives.
+pub(crate) struct Packaging(String);
+
+impl Packaging {
+    fn start(artwork: &str) -> Packaging {
+        if let Ok(mut packaging) = PACKAGING.lock() {
+            *packaging.entry(artwork.to_owned()).or_insert(0) += 1;
+        }
+        Packaging(artwork.to_owned())
+    }
+}
+
+impl Drop for Packaging {
+    fn drop(&mut self) {
+        if let Ok(mut packaging) = PACKAGING.lock()
+            && let Some(count) = packaging.get_mut(&self.0)
+        {
+            if *count > 1 {
+                *count -= 1;
+            } else {
+                packaging.remove(&self.0);
+            }
+        }
+    }
+}
+
+fn packaging(artwork: &str) -> bool {
+    PACKAGING.lock().is_ok_and(|packaging| packaging.contains_key(artwork))
+}
+
+/// Holds packaging open for a test, as the editor does while it makes the videos.
+#[cfg(test)]
+pub(crate) fn hold_packaging(artwork: &str) -> Packaging {
+    Packaging::start(artwork)
+}
+
+/// Makes the time-lapse of `dir` into videos on a thread of its own, marked as packaging before it
+/// starts: the gallery waits for it rather than read half-written frames.
+pub(crate) fn package_later(dir: String) {
+    let packaging = Packaging::start(&dir);
+    std::thread::spawn(move || {
+        let _packaging = packaging;
+        let _ = for_package(&dir);
+    });
+}
+
+/// Whether the artwork in folder `artwork` has a time-lapse recorded, read without changing it.
+pub(crate) fn recorded(artwork: &str) -> Recorded {
+    if packaging(artwork) {
+        return Recorded::Packaging;
+    }
+    let has = TimeLapse::new(artwork.to_owned()).count() > 0;
+    // it began being packaged as it was read: read again once it is done
+    if packaging(artwork) {
+        return Recorded::Packaging;
+    }
+    if has { Recorded::Yes } else { Recorded::No }
+}
+
+/// The time-lapse of the artwork in folder `dir` as a package keeps it, its frames made into
+/// videos first (only those since the last share, when the videos made then still hold).
+pub fn for_package(dir: &str) -> sumi_core::PackageTimeLapse {
+    let _packaging = Packaging::start(dir);
+    let lapse = TimeLapse::new(dir.to_owned());
+    let mut plan = lapse.segment_plan();
+    while let Some(p) = plan {
+        plan = match make_segment(&lapse, &p) {
+            Ok((w, h)) => lapse.segment_made(p, w, h, true),
+            Err(e) => {
+                log::warn!("a time-lapse video for a package: {e}");
+                lapse.segment_made(p, 0, 0, false)
+            }
+        };
+    }
+    // the pictures now in a video go, as the artwork file keeps a time-lapse: only as video
+    drop_pictures(&lapse);
+    lapse.for_package()
+}
+
+/// The pictures its videos hold too gone, once this system has read those videos: videos go
+/// through its own decoders, and where it has none for them the pictures are all there is to
+/// replay. How many went.
+fn drop_pictures(lapse: &TimeLapse) -> u32 {
+    let readable = lapse.clips_with_pictures().iter().all(|clip| {
+        let mut read = false;
+        let done = crate::video::read_frames(std::path::Path::new(&clip.path), |_, _, _, _| {
+            read = true;
+            false
+        });
+        if let Err(e) = done {
+            log::warn!("a time-lapse video: {e}");
+        }
+        read
+    });
+    if readable {
+        lapse.drop_clip_frames()
+    } else {
+        log::warn!("the time-lapse's videos can't be read here: their pictures stay");
+        0
+    }
+}
+
+/// Sets its flag once dropped: what it stops, stopped however its holder ends.
+struct Stops(Arc<AtomicBool>);
+
+impl Drop for Stops {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+}
+
+/// What reading the frames ahead has come to: all read, or why one couldn't be (the first such
+/// cause, as the video reader gives it).
+#[derive(Default)]
+struct ReadState {
+    finished: bool,
+    problem: Option<String>,
+}
+
+/// Frames read ahead off the window's thread, and the stop that ends their reading when they go.
+struct Reading {
+    frames: Receiver<(u32, ThumbnailImage)>,
+    state: Arc<Mutex<ReadState>>,
+    _stops: Stops,
+}
+
+impl Reading {
+    fn recv(&self) -> Result<(u32, ThumbnailImage), std::sync::mpsc::RecvError> {
+        self.frames.recv()
+    }
+
+    /// What it has come to: whether it is done, and the first cause it couldn't read a frame.
+    fn state(&self) -> ReadState {
+        match self.state.lock() {
+            Ok(state) => ReadState { finished: state.finished, problem: state.problem.clone() },
+            Err(_) => ReadState { finished: true, problem: Some("the frames' reader stopped".into()) },
+        }
+    }
+}
+
+/// Marks its reading finished however the reading thread ends.
+struct Finished(Arc<Mutex<ReadState>>);
+
+impl Drop for Finished {
+    fn drop(&mut self) {
+        if let Ok(mut state) = self.0.lock() {
+            state.finished = true;
+        }
+    }
+}
+
+/// Notes the first cause a frame couldn't be read (the one after it tells nothing new).
+fn note_problem(state: &Arc<Mutex<ReadState>>, problem: String) {
+    if let Ok(mut state) = state.lock()
+        && state.problem.is_none()
+    {
+        state.problem = Some(problem);
+    }
+}
+
+/// Frames `wanted` (rising) of `lapse`, each with its number, read in order off the window's
+/// thread a few ahead: from its videos (decoded as they come, the artwork file's way of keeping them)
+/// and its pictures. A frame that can't be read is left out; what was left out is in [`Reading`]'s
+/// state. It stops once it is dropped or nothing takes them.
+fn read_in_order(lapse: Arc<TimeLapse>, wanted: Vec<u32>) -> Reading {
+    let (tx, rx) = sync_channel(4);
+    let state = Arc::new(Mutex::new(ReadState::default()));
+    let shared = Arc::clone(&state);
+    let stop = Arc::new(AtomicBool::new(false));
+    let stops = Stops(Arc::clone(&stop));
+    std::thread::spawn(move || {
+        let _finished = Finished(Arc::clone(&shared));
+        let clips = lapse.clips();
+        let mut next = 0usize;
+        while let Some(&i) = wanted.get(next) {
+            if stop.load(Ordering::Relaxed) {
+                return;
+            }
+            let Some(clip) = clips.iter().find(|c| i >= c.first && i - c.first < c.frames) else {
+                match lapse.frame(i) {
+                    Some(frame) => {
+                        if tx.send((i, frame)).is_err() {
+                            return;
+                        }
+                    }
+                    None => note_problem(&shared, "a frame can't be read".into()),
+                }
+                next += 1;
+                continue;
+            };
+            let end = clip.first + clip.frames;
+            let (mut at, mut gone) = (clip.first, false);
+            let read = crate::video::read_frames(std::path::Path::new(&clip.path), |rgba, width, height, _| {
+                let here = at;
+                at += 1;
+                if wanted.get(next) == Some(&here) {
+                    next += 1;
+                    if tx.send((here, ThumbnailImage { width, height, rgba })).is_err() {
+                        gone = true;
+                        return false;
+                    }
+                }
+                !stop.load(Ordering::Relaxed) && wanted.get(next).is_some_and(|&n| n < end)
+            });
+            if gone {
+                return;
+            }
+            if let Err(e) = read {
+                log::warn!("a time-lapse video: {e}");
+                note_problem(&shared, e);
+            }
+            // frames the video didn't hold (fewer than noted): left out
+            while wanted.get(next).is_some_and(|&n| n < end) {
+                next += 1;
+            }
+        }
+    });
+    Reading { frames: rx, state, _stops: stops }
+}
+
+/// `plan`'s frames as a video, fitted on white; one added to those before comes out their size.
+fn make_segment(lapse: &TimeLapse, plan: &sumi_core::SegmentPlan) -> Result<(u32, u32), String> {
+    let settings = sumi_core::TimeLapseSettings { hevc: plan.hevc, ..lapse.settings() };
+    let (width, height, side) = if plan.width > 0 && plan.height > 0 {
+        (plan.width, plan.height, plan.width.max(plan.height))
+    } else {
+        let first = lapse.frame(*plan.frames.first().ok_or("no frames")?).ok_or("the first frame can't be read")?;
+        (first.width, first.height, time_lapse_side(settings))
+    };
+    let size = crate::video::write_mp4(
+        std::path::Path::new(&plan.path),
+        width,
+        height,
+        side,
+        TIME_LAPSE_FPS as f32,
+        settings.hevc,
+        time_lapse_bits_per_pixel(settings),
+        plan.frames.len(),
+        |n, w, h| Some(on_white(&lapse.frame(*plan.frames.get(n)?)?, w, h)),
+    )?;
+    if plan.append && size != (plan.width, plan.height) {
+        return Err("the encoder won't make it the size of those before".into());
+    }
+    Ok(size)
+}
+
+/// The time-lapse of the package at `package` taken into the artwork folder `dir`: its settings,
+/// and its videos' frames (the videos kept to go back into a package when they all came in).
+pub fn take_package(package: &std::path::Path, dir: &str) {
+    let temp = std::env::temp_dir().join(format!("sumi-segments-{}", std::process::id()));
+    let taken =
+        sumi_core::package_time_lapse(package.to_string_lossy().into_owned(), temp.to_string_lossy().into_owned());
+    let t = match taken {
+        Ok(Some(t)) => t,
+        Ok(None) => return,
+        Err(e) => {
+            log::warn!("a package's time-lapse: {e}");
+            return;
+        }
+    };
+    let lapse = TimeLapse::new(dir.to_owned());
+    // as the package keeps it: its videos as they are, nothing decoded
+    if lapse.take_clips(t.clone()) {
+        let _ = std::fs::remove_dir_all(&temp);
+        return;
+    }
+    let videos = t.segments.clone();
+    lapse.take_begin(t);
+    for path in videos {
+        let read = crate::video::read_frames(std::path::Path::new(&path), |rgba, w, h, _| {
+            lapse.keep_frame(rgba, w, h);
+            true
+        });
+        let frames = read.unwrap_or_else(|e| {
+            log::warn!("a package's time-lapse video: {e}");
+            0
+        });
+        lapse.take_video(path, frames);
+    }
+    lapse.take_end();
+    let _ = std::fs::remove_dir_all(&temp);
+}
+
+/// `frame` fitted into `w` × `h` on white, as RGBA rows.
+fn on_white(frame: &sumi_core::ThumbnailImage, w: u32, h: u32) -> Vec<u8> {
+    let mut out = image::RgbaImage::from_pixel(w, h, image::Rgba([255, 255, 255, 255]));
+    if let Some(picture) = image::RgbaImage::from_raw(frame.width, frame.height, frame.rgba.clone()) {
+        let k = (w as f32 / frame.width.max(1) as f32).min(h as f32 / frame.height.max(1) as f32);
+        let (dw, dh) = (((frame.width as f32 * k) as u32).max(1), ((frame.height as f32 * k) as u32).max(1));
+        let fitted = image::imageops::resize(&picture, dw, dh, image::imageops::FilterType::Triangle);
+        image::imageops::overlay(&mut out, &fitted, i64::from((w - dw.min(w)) / 2), i64::from((h - dh.min(h)) / 2));
+    }
+    out.into_raw()
+}
+
+/// The video made copied where the person picks.
+fn save_as(made: &std::path::Path) {
+    let name = made.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let Some(to) = rfd::FileDialog::new()
+        .set_title("Export time-lapse video")
+        .set_file_name(name)
+        .add_filter("MP4 video", &["mp4"])
+        .save_file()
+    else {
+        return;
+    };
+    if let Err(e) = save_to(made, &to) {
+        crate::files::tell("Can't export", &e.to_string());
+    }
+}
+
+/// The video made copied to `to`, whole or not at all: into a file of its own beside it, then
+/// renamed over it (copied onto itself, a file is emptied; cut short, the one there would be).
+fn save_to(made: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
+    let mut n = 0;
+    // a name of its own: never over a file that is already beside `to`
+    let staging = loop {
+        let part = save_staging(to, n);
+        match std::fs::OpenOptions::new().write(true).create_new(true).open(&part) {
+            Ok(_) => break part,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => n += 1,
+            Err(e) => return Err(e),
+        }
+    };
+    let put = std::fs::copy(made, &staging).and_then(|_| std::fs::rename(&staging, to));
+    if put.is_err() {
+        let _ = std::fs::remove_file(&staging);
+    }
+    put
+}
+
+/// The file beside `to` a save copies into first, `n` keeping it its own: named on its own so a
+/// destination at the filesystem's name limit still leaves it room.
+fn save_staging(to: &std::path::Path, n: u32) -> PathBuf {
+    to.with_file_name(format!(".sumi-save-{}-{n}.part", std::process::id()))
+}
+
+/// The time-lapse replayed over everything at its frame rate; dragging across the screen scrubs
+/// through it. A bar on top: the title, the time into the replay, and Done.
+pub(crate) struct TimeLapsePlayer {
+    count: u32,
+    index: u32,
+    stepped: Instant,
+    /// Dragged: where it began and the frame then.
+    scrub: Option<(f32, u32)>,
+    shown: Option<(u32, TextureHandle)>,
+    /// The frames from one on, read ahead (from its videos, decoded as they come), and when it
+    /// last began again elsewhere.
+    ahead: Option<Ahead>,
+    began: Instant,
+    /// The time-lapse it replays, if there is one (none: nothing recorded yet).
+    lapse: Option<Arc<TimeLapse>>,
+    /// Why no frame could be shown, once its frames were all read.
+    unavailable: Option<&'static str>,
+    /// Whether a frame has been shown: only one that never came says it can't read them.
+    ever_shown: bool,
+}
+
+/// Frames read ahead from `from`: the next to come, and one come before it was wanted.
+struct Ahead {
+    from: u32,
+    next: u32,
+    waiting: Option<(u32, ThumbnailImage)>,
+    reading: Reading,
+}
+
+impl TimeLapsePlayer {
+    /// A player of `lapse`'s frames; none, nothing recorded yet.
+    pub(crate) fn new(lapse: Option<Arc<TimeLapse>>) -> TimeLapsePlayer {
+        let count = lapse.as_ref().map_or(0, |t| t.count());
+        TimeLapsePlayer {
+            count,
+            index: 0,
+            stepped: Instant::now(),
+            scrub: None,
+            shown: None,
+            ahead: None,
+            began: Instant::now(),
+            lapse: lapse.filter(|_| count > 0),
+            unavailable: None,
+            ever_shown: false,
+        }
+    }
+
+    /// Plays the time-lapse of the artwork in folder `artwork`, read without changing it.
+    pub(crate) fn for_gallery(artwork: &str) -> TimeLapsePlayer {
+        TimeLapsePlayer::new(Some(TimeLapse::new(artwork.to_owned())))
+    }
+
+    /// What it says instead of frames: nothing was recorded, or why none could be read.
+    pub(crate) fn message(&self) -> Option<&'static str> {
+        if self.count == 0 { Some("Nothing recorded yet") } else { self.unavailable }
+    }
+
+    /// Whether a frame has been shown (what the gallery and editor wait for).
+    #[cfg(test)]
+    pub(crate) fn showing(&self) -> bool {
+        self.shown.is_some()
+    }
+
+    /// The stop signal of the frames being read ahead, held to check a drop stops them.
+    #[cfg(test)]
+    fn reading_stop(&self) -> Option<Arc<AtomicBool>> {
+        self.ahead.as_ref().map(|a| Arc::clone(&a.reading._stops.0))
+    }
+
+    /// The frame to show now, once read: frames read ahead from it, again from where it is when
+    /// it jumps back or far ahead (while scrubbing, at most every 0.1 s). Once all its frames have
+    /// been read without one to show, it says why it can't instead of staying blank.
+    fn fetch(&mut self, ctx: &egui::Context, lapse: &Arc<TimeLapse>) {
+        if self.unavailable.is_some() {
+            return;
+        }
+        let want = self.index;
+        if self.shown.as_ref().is_some_and(|(i, _)| *i == want) {
+            return;
+        }
+        let shown = self.shown.as_ref().map(|(i, _)| *i);
+        // scrubbed back past the frame shown, to one this read has already gone by: read it again
+        let behind = shown.is_some_and(|shown| want < shown);
+        let off = self.ahead.as_ref().is_none_or(|a| {
+            want < a.from || want > a.next + TIME_LAPSE_FPS || (behind && a.next > want && a.waiting.is_none())
+        });
+        // a backward seek starts again at once; another (while dragging) at most every 0.1 s
+        if off && (self.scrub.is_none() || behind || self.began.elapsed() >= Duration::from_millis(100)) {
+            let reading = read_in_order(Arc::clone(lapse), (want..self.count).collect());
+            self.ahead = Some(Ahead { from: want, next: want, waiting: None, reading });
+            self.began = Instant::now();
+        }
+        ctx.request_repaint_after(Duration::from_millis(16));
+        let Some(ahead) = self.ahead.as_mut() else { return };
+        while let Some((i, frame)) = ahead.waiting.take().or_else(|| ahead.reading.frames.try_recv().ok()) {
+            ahead.next = i + 1;
+            if i < want {
+                continue;
+            }
+            if i > want && self.scrub.is_some() {
+                ahead.waiting = Some((i, frame));
+                break;
+            }
+            // one left out (unreadable): the next shown in its place
+            self.index = i;
+            let image =
+                egui::ColorImage::from_rgba_unmultiplied([frame.width as usize, frame.height as usize], &frame.rgba);
+            self.shown = Some((i, ctx.load_texture("time-lapse", image, egui::TextureOptions::LINEAR)));
+            self.ever_shown = true;
+            break;
+        }
+        // every frame read, none ever shown: say why rather than leave the grid blank
+        if !self.ever_shown
+            && let Some(ahead) = &self.ahead
+            && ahead.reading.state().finished
+        {
+            self.unavailable = Some(problem_message(ahead.reading.state().problem.as_deref()));
+            self.ahead = None;
+            ctx.request_repaint();
+        }
+    }
+
+    /// True when Done was tapped (or Escape).
+    pub(crate) fn show(&mut self, ctx: &egui::Context, look: &mut Look) -> bool {
+        let screen = ctx.content_rect();
+        // play, frame by frame, until the end or a scrub: on once it's time and the frame shown
+        // has come
+        let step = Duration::from_millis(1000 / u64::from(TIME_LAPSE_FPS));
+        let caught_up = self.shown.as_ref().is_some_and(|(i, _)| *i == self.index);
+        if self.scrub.is_none() && self.index + 1 < self.count && caught_up {
+            if self.stepped.elapsed() >= step {
+                self.index += 1;
+                self.stepped = Instant::now();
+            }
+            ctx.request_repaint_after(step.saturating_sub(self.stepped.elapsed()));
+        }
+        let lapse = self.lapse.clone();
+        if let Some(lapse) = &lapse {
+            self.fetch(ctx, lapse);
+        }
+        // (under the bar with its Done, in the Foreground: in one layer order, a press on the picture
+        // would raise it over the bar)
+        egui::Area::new(Id::unique("time-lapse replay")).fixed_pos(screen.min).order(Order::Middle).show(ctx, |ui| {
+            let response = ui.allocate_rect(screen, Sense::click_and_drag());
+            ui.painter().rect_filled(screen, 0, argb(REPLAY_FILL));
+            surround_grid(ui, screen);
+            if let Some((_, t)) = &self.shown {
+                // edge to edge, under the header
+                let [w, h] = t.size().map(|v| v.max(1) as f32);
+                let k = (screen.width() / w).min(screen.height() / h);
+                let picture = Rect::from_center_size(screen.center(), vec2(w * k, h * k));
+                ui.painter().image(t.id(), picture, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+            }
+            if let Some(message) = self.message() {
+                if self.unavailable.is_some() {
+                    unavailable_note(ui, screen, message);
+                } else {
+                    text(
+                        ui.painter(),
+                        screen.center(),
+                        Align2::CENTER_CENTER,
+                        message,
+                        17.0,
+                        Weight::Regular,
+                        argb(EMPTY_INK),
+                    );
+                }
+            }
+            if response.drag_started()
+                && let Some(p) = response.interact_pointer_pos()
+            {
+                self.scrub = Some((p.x, self.index));
+            }
+            if let (Some((start, from)), Some(p)) = (self.scrub, response.interact_pointer_pos())
+                && response.dragged()
+            {
+                let moved = (p.x - start) / screen.width();
+                let to = from as f32 + (moved * self.count as f32).trunc();
+                self.index = to.clamp(0.0, self.count.saturating_sub(1) as f32) as u32;
+            }
+            if response.drag_stopped() {
+                self.scrub = None;
+                self.stepped = Instant::now();
+            }
+            // how far it has played
+            let f = if self.count > 1 { self.index as f32 / (self.count - 1) as f32 } else { 1.0 };
+            let bar = Rect::from_min_size(
+                pos2(screen.left(), screen.top() + tool_header::HEIGHT),
+                vec2(screen.width() * f.clamp(0.0, 1.0), 4.0),
+            );
+            ui.painter().rect_filled(bar, 0, argb(PROGRESS));
+        });
+        // the time into the replay, in frames past the second
+        let seconds = self.index / TIME_LAPSE_FPS;
+        let time = format!(
+            "{:02}:{:02}:{:02}:{:02}",
+            seconds / 3600,
+            seconds / 60 % 60,
+            seconds % 60,
+            self.index % TIME_LAPSE_FPS
+        );
+        let tapped = tool_header::show_in(ctx, look, "Time-lapse Replay", &[(&time, false)], tool_header::OVER_PICTURE);
+        crate::ui::escape(ctx) || tapped == Some(tool_header::Tapped::Done)
+    }
+}
+
+/// What a player with no frame to show says: the encoder's own words when it isn't there, else
+/// that these frames can't be read here.
+fn problem_message(problem: Option<&str>) -> &'static str {
+    if problem == Some(crate::video::NO_FFMPEG) {
+        crate::video::NO_FFMPEG
+    } else {
+        "The time-lapse's frames can't be read here."
+    }
+}
+
+/// A message over the blank grid, wrapped to the window and on a panel of its own so the grid
+/// doesn't read through it.
+fn unavailable_note(ui: &egui::Ui, screen: Rect, message: &str) {
+    let (width, ink) = ((screen.width() - 160.0).max(160.0), argb(pc::TEXT));
+    let galley = ui.painter().layout(message.to_owned(), Weight::Regular.font(16.0), ink, width);
+    let panel = Rect::from_center_size(screen.center(), galley.size() + vec2(36.0, 28.0));
+    ui.painter().rect_filled(panel, 10.0, argb(REPLAY_FILL));
+    ui.painter().galley(panel.center() - galley.size() / 2.0, galley, ink);
+}
+
+/// The surround's grid as the canvas draws it (1 1/3 pt lines every 16, none under the top bar),
+/// for screens shown in the canvas's place.
+fn surround_grid(ui: &egui::Ui, screen: Rect) {
+    let (step, width, top) = (16.0, 4.0 / 3.0, screen.top() + 44.0);
+    let origin = screen.min + vec2(0.5, 0.5);
+    let mut x = origin.x;
+    while x < screen.right() {
+        let line = Rect::from_min_max(pos2(x - width / 2.0, top), pos2(x + width / 2.0, screen.bottom()));
+        ui.painter().rect_filled(line, 0, argb(GRID_LINE));
+        x += step;
+    }
+    let mut y = origin.y - ((origin.y - top) / step).floor() * step;
+    while y < screen.bottom() {
+        if y - width / 2.0 >= top {
+            let line = Rect::from_min_max(pos2(screen.left(), y - width / 2.0), pos2(screen.right(), y + width / 2.0));
+            ui.painter().rect_filled(line, 0, argb(GRID_LINE));
+        }
+        y += step;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::hash::{Hash, Hasher};
+    use std::path::{Path, PathBuf};
+
+    use egui::{Event, Modifiers, RawInput, Rect, pos2, vec2};
+
+    use super::*;
+
+    /// A directory of its own for a test, under the system's temporary directory (the build sets
+    /// it inside the HDD), made unique by the process and the clock.
+    fn scratch(name: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+        let dir = std::env::temp_dir().join(format!("sumi-timelapse-{name}-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// The names in a folder, sorted.
+    fn names(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> =
+            std::fs::read_dir(dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        names.sort();
+        names
+    }
+
+    /// A small JPEG at `path`, all one colour.
+    fn write_jpeg(path: &Path) {
+        write_jpeg_colour(path, [127, 127, 127]);
+    }
+
+    /// A small JPEG at `path` of one colour (its frames differ by it).
+    fn write_jpeg_colour(path: &Path, colour: [u8; 3]) {
+        let rgb: Vec<u8> = colour.iter().copied().cycle().take(8 * 8 * 3).collect();
+        image::save_buffer_with_format(path, &rgb, 8, 8, image::ExtendedColorType::Rgb8, image::ImageFormat::Jpeg)
+            .unwrap();
+    }
+
+    /// What the artwork folder holds: each file's path, size and a hash of its bytes.
+    fn manifest(dir: &Path) -> Vec<(String, usize, u64)> {
+        fn walk(base: &Path, at: &Path, out: &mut Vec<(String, usize, u64)>) {
+            let mut paths: Vec<PathBuf> = std::fs::read_dir(at).unwrap().map(|e| e.unwrap().path()).collect();
+            paths.sort();
+            for path in paths {
+                if path.is_dir() {
+                    walk(base, &path, out);
+                } else {
+                    let bytes = std::fs::read(&path).unwrap();
+                    let mut hash = std::collections::hash_map::DefaultHasher::new();
+                    bytes.hash(&mut hash);
+                    out.push((
+                        path.strip_prefix(base).unwrap().to_string_lossy().into_owned(),
+                        bytes.len(),
+                        hash.finish(),
+                    ));
+                }
+            }
+        }
+        let mut out = Vec::new();
+        walk(dir, dir, &mut out);
+        out
+    }
+
+    /// A time-lapse whose only video is not a video (the artwork changed without pictures after).
+    fn unreadable_video(art: &Path, segment: bool) {
+        let lapse = art.join("timelapse");
+        std::fs::create_dir_all(&lapse).unwrap();
+        if segment {
+            std::fs::write(
+                lapse.join("segments.json"),
+                r#"{"resolution":0,"quality":1,"hevc":false,"width":8,"height":8,"bitrate":1000000,"ends":[1]}"#,
+            )
+            .unwrap();
+            std::fs::write(lapse.join("segment-1.mp4"), b"not a video").unwrap();
+        } else {
+            std::fs::write(lapse.join("frame-000000.jpg"), b"not a jpeg").unwrap();
+        }
+    }
+
+    /// Runs one headless frame of the player; true when it was closed (Done or Escape).
+    fn frame(
+        player: &mut TimeLapsePlayer,
+        ctx: &egui::Context,
+        look: &mut Look,
+        events: Vec<Event>,
+        time: &mut f64,
+    ) -> bool {
+        *time += 1.0 / 60.0;
+        let raw = RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0))),
+            time: Some(*time),
+            events,
+            ..RawInput::default()
+        };
+        let mut closed = false;
+        let mut out = ctx.run_ui(raw, |ui| closed = player.show(ui.ctx(), look));
+        // the pictures' and fonts' uploads: these tests read what the player shows, not the textures
+        out.textures_delta.clear();
+        closed
+    }
+
+    #[test]
+    fn seeking_back_to_a_frame_already_read_shows_it_again() {
+        let root = scratch("seek-back");
+        let art = root.join("artwork");
+        let lapse_dir = art.join("timelapse");
+        std::fs::create_dir_all(&lapse_dir).unwrap();
+        write_jpeg_colour(&lapse_dir.join("frame-000000.jpg"), [255, 0, 0]);
+        write_jpeg_colour(&lapse_dir.join("frame-000001.jpg"), [0, 0, 255]);
+        let lapse = TimeLapse::new(art.to_string_lossy().into_owned());
+        let (first, second) = (lapse.frame(0).expect("frame 0"), lapse.frame(1).expect("frame 1"));
+        assert_ne!(first.rgba, second.rgba, "the fixture's frames differ");
+        let mut player = TimeLapsePlayer::new(Some(Arc::clone(&lapse)));
+        let (ctx, mut look) = (egui::Context::default(), Look::default());
+        crate::look::install_fonts(&ctx);
+        let mut time = 0.0;
+        let mut shows = |player: &mut TimeLapsePlayer, want: u32| {
+            let deadline = Instant::now() + Duration::from_secs(3);
+            while Instant::now() < deadline {
+                frame(player, &ctx, &mut look, Vec::new(), &mut time);
+                if player.shown.as_ref().is_some_and(|(i, _)| *i == want) {
+                    return true;
+                }
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            false
+        };
+        assert!(shows(&mut player, 0), "frame 0 shows first");
+        player.stepped = Instant::now() - Duration::from_secs(1);
+        assert!(shows(&mut player, 1), "playback moves to frame 1");
+        // the drag is held back at the start: the index is 0 while frame 1 is still shown
+        player.scrub = Some((0.0, 1));
+        player.index = 0;
+        assert!(shows(&mut player, 0), "seeking back to a frame already shown shows it again");
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn an_empty_replay_says_nothing_was_recorded_and_escape_closes_it() {
+        let (ctx, mut look) = (egui::Context::default(), Look::default());
+        crate::look::install_fonts(&ctx);
+        let mut time = 0.0;
+        let mut player = TimeLapsePlayer::new(None);
+        assert_eq!(player.message(), Some("Nothing recorded yet"));
+        frame(&mut player, &ctx, &mut look, Vec::new(), &mut time);
+        let escape = Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        };
+        assert!(frame(&mut player, &ctx, &mut look, vec![escape], &mut time), "Escape closes the replay");
+    }
+
+    #[test]
+    fn a_replay_whose_video_cannot_be_read_says_so_instead_of_staying_blank() {
+        let root = scratch("unreadable-video");
+        let art = root.join("artwork");
+        unreadable_video(&art, true);
+        let (ctx, mut look) = (egui::Context::default(), Look::default());
+        crate::look::install_fonts(&ctx);
+        let mut time = 0.0;
+        let mut player = TimeLapsePlayer::for_gallery(&art.to_string_lossy());
+        assert_eq!(player.count, 1, "the video notes a frame");
+        // The reader's completion, not a scheduler budget: an unreadable clip must send no frame.
+        _ = frame(&mut player, &ctx, &mut look, Vec::new(), &mut time);
+        if let Some(ahead) = player.ahead.as_ref() {
+            assert!(ahead.reading.recv().is_err(), "an unreadable video must produce no frames");
+            assert!(ahead.reading.state().finished, "the reader finished");
+        }
+        _ = frame(&mut player, &ctx, &mut look, Vec::new(), &mut time);
+        let said = player.message().expect("a replay with no frame says why");
+        assert!(said == crate::video::NO_FFMPEG || said.contains("can't be read"), "{said}");
+        let escape = Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        };
+        assert!(frame(&mut player, &ctx, &mut look, vec![escape], &mut time));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn an_unreadable_time_lapse_is_left_as_it_was() {
+        let root = scratch("unreadable-pictures");
+        let art = root.join("artwork");
+        unreadable_video(&art, false);
+        let before = manifest(&art);
+        let (ctx, mut look) = (egui::Context::default(), Look::default());
+        crate::look::install_fonts(&ctx);
+        let mut time = 0.0;
+        let mut player = TimeLapsePlayer::for_gallery(&art.to_string_lossy());
+        for _ in 0..300 {
+            frame(&mut player, &ctx, &mut look, Vec::new(), &mut time);
+            if player.message().is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert!(player.message().is_some(), "a replay with no frame says why");
+        drop(player);
+        assert_eq!(before, manifest(&art), "replaying left the artwork as it was");
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn saving_onto_the_made_video_leaves_it_whole() {
+        // The save dialog names the file the export made (in the temporary folder it was made
+        // in), so it can be pointed back at that file: delivering must not empty it.
+        let root = scratch("save-onto-itself");
+        let made = root.join("artwork.mp4");
+        std::fs::write(&made, b"made video").unwrap();
+        save_to(&made, &made).unwrap();
+        assert_eq!(std::fs::read(&made).unwrap(), b"made video", "the made video was emptied");
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn saving_leaves_an_unrelated_part_file_alone() {
+        let root = scratch("save-beside-part");
+        let (made, to) = (root.join("new.mp4"), root.join("artwork.mp4"));
+        std::fs::write(&made, b"new video").unwrap();
+        std::fs::write(&to, b"old video").unwrap();
+        let part = root.join("artwork.mp4.part");
+        std::fs::write(&part, b"someone else's").unwrap();
+        save_to(&made, &to).unwrap();
+        assert_eq!(std::fs::read(&to).unwrap(), b"new video", "the video was not put in place");
+        assert_eq!(std::fs::read(&part).unwrap(), b"someone else's", "a file beside it was overwritten");
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn saving_a_long_legal_name_still_saves() {
+        // A destination name up to the filesystem's limit is legal; the staging file beside it
+        // must not be built from that name (which would make the staging name longer still).
+        let root = scratch("save-long-name");
+        let made = root.join("made.mp4");
+        std::fs::write(&made, b"made video").unwrap();
+        let to = root.join(format!("{}.mp4", "a".repeat(250)));
+        assert!(to.file_name().unwrap().len() <= 255, "the fixture's name is legal");
+        save_to(&made, &to).unwrap();
+        assert_eq!(std::fs::read(&to).unwrap(), b"made video", "the video was not saved");
+        assert_eq!(std::fs::read(&made).unwrap(), b"made video", "the made video changed");
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn saving_a_missing_video_keeps_the_old_file_and_leaves_nothing_behind() {
+        let root = scratch("save-missing-made");
+        let (to, missing) = (root.join("artwork.mp4"), root.join("gone.mp4"));
+        std::fs::write(&to, b"old video").unwrap();
+        assert!(save_to(&missing, &to).is_err());
+        assert_eq!(std::fs::read(&to).unwrap(), b"old video", "the old video was changed");
+        assert_eq!(names(&root), vec!["artwork.mp4".to_owned()], "the save left a file of its own behind");
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn saving_skips_a_staging_file_it_does_not_own() {
+        let root = scratch("save-staging-collision");
+        let (made, to) = (root.join("made.mp4"), root.join("artwork.mp4"));
+        std::fs::write(&made, b"made video").unwrap();
+        std::fs::write(&to, b"old video").unwrap();
+        let theirs = save_staging(&to, 0);
+        std::fs::write(&theirs, b"someone else's").unwrap();
+        save_to(&made, &to).unwrap();
+        assert_eq!(std::fs::read(&to).unwrap(), b"made video", "the video was not saved");
+        assert_eq!(std::fs::read(&made).unwrap(), b"made video", "the made video changed");
+        assert_eq!(std::fs::read(&theirs).unwrap(), b"someone else's", "a file it did not own was overwritten");
+        let mut want = vec![
+            "artwork.mp4".to_owned(),
+            "made.mp4".to_owned(),
+            theirs.file_name().unwrap().to_string_lossy().into_owned(),
+        ];
+        want.sort();
+        assert_eq!(names(&root), want, "a staging file of its own was left behind");
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn replaying_pictures_reads_them_without_changing_the_artwork() {
+        let root = scratch("read-only");
+        let art = root.join("artwork");
+        let lapse = art.join("timelapse");
+        std::fs::create_dir_all(&lapse).unwrap();
+        for i in 0..3 {
+            write_jpeg(&lapse.join(format!("frame-{i:06}.jpg")));
+        }
+        let before = manifest(&art);
+        let artwork = art.to_string_lossy().into_owned();
+        assert_eq!(recorded(&artwork), Recorded::Yes, "the pictures are a time-lapse");
+        let (ctx, mut look) = (egui::Context::default(), Look::default());
+        crate::look::install_fonts(&ctx);
+        let mut time = 0.0;
+        let mut player = TimeLapsePlayer::for_gallery(&artwork);
+        for _ in 0..300 {
+            frame(&mut player, &ctx, &mut look, Vec::new(), &mut time);
+            if player.shown.is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert!(player.shown.is_some(), "a frame was read");
+        drop(player);
+        assert_eq!(before, manifest(&art), "replaying left the artwork as it was");
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_time_lapse_being_packaged_is_not_read_until_packaging_ends() {
+        let root = scratch("packaging");
+        let art = root.join("artwork");
+        let lapse = art.join("timelapse");
+        std::fs::create_dir_all(&lapse).unwrap();
+        write_jpeg(&lapse.join("frame-000000.jpg"));
+        let artwork = art.to_string_lossy().into_owned();
+        let packaging = hold_packaging(&artwork);
+        assert_eq!(recorded(&artwork), Recorded::Packaging);
+        drop(packaging);
+        assert_eq!(recorded(&artwork), Recorded::Yes);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn dropping_a_replay_stops_the_frames_being_read() {
+        let root = scratch("cancelled");
+        let art = root.join("artwork");
+        let lapse = art.join("timelapse");
+        std::fs::create_dir_all(&lapse).unwrap();
+        // enough frames that the reader is still at it when the replay goes
+        for i in 0..200 {
+            write_jpeg(&lapse.join(format!("frame-{i:06}.jpg")));
+        }
+        let (ctx, mut look) = (egui::Context::default(), Look::default());
+        crate::look::install_fonts(&ctx);
+        let mut time = 0.0;
+        let mut player = TimeLapsePlayer::for_gallery(&art.to_string_lossy());
+        frame(&mut player, &ctx, &mut look, Vec::new(), &mut time);
+        let stop = player.reading_stop().expect("the replay reads its frames ahead");
+        assert!(!stop.load(Ordering::Relaxed));
+        drop(player);
+        assert!(stop.load(Ordering::Relaxed), "dropping the replay stops its reader");
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn the_editor_s_replay_still_plays_the_artwork_it_opened() {
+        let root = scratch("editor-replay");
+        let art = root.join("artwork");
+        let lapse = art.join("timelapse");
+        std::fs::create_dir_all(&lapse).unwrap();
+        for i in 0..3 {
+            write_jpeg(&lapse.join(format!("frame-{i:06}.jpg")));
+        }
+        let dir = art.to_string_lossy().into_owned();
+        let mut lapse_ui = TimeLapseUi::default();
+        lapse_ui.lapse = Some((dir.clone(), TimeLapse::new(dir)));
+        lapse_ui.replay();
+        assert!(lapse_ui.replaying());
+        let (ctx, mut look) = (egui::Context::default(), Look::default());
+        crate::look::install_fonts(&ctx);
+        let mut time = 0.0;
+        for _ in 0..60 {
+            time += 1.0 / 60.0;
+            let raw = RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0))),
+                time: Some(time),
+                ..RawInput::default()
+            };
+            let _ = ctx.run_ui(raw, |ui| _ = lapse_ui.show(ui.ctx(), &mut look, "Artwork")).textures_delta.clear();
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert!(lapse_ui.replaying(), "the editor's replay is still up");
+        let escape = Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        };
+        let raw = RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0))),
+            time: Some(time + 1.0 / 60.0),
+            events: vec![escape],
+            ..RawInput::default()
+        };
+        let _ = ctx.run_ui(raw, |ui| _ = lapse_ui.show(ui.ctx(), &mut look, "Artwork")).textures_delta.clear();
+        assert!(!lapse_ui.replaying(), "Escape closes the editor's replay too");
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    #[ignore = "requires external FFmpeg/FFprobe for the real export roundtrip"]
+    fn a_time_lapse_export_thread_makes_a_playable_mp4() {
+        // The real UI export thread and card, with the system's encoder: no mocked writer, no
+        // dialog, and no skip path (a missing encoder must fail this test, not pass it).
+        let root = scratch("native-export");
+        let art = root.join("artwork");
+        std::fs::create_dir_all(&art).unwrap();
+        let lapse = TimeLapse::new(art.to_string_lossy().into_owned());
+        // The UI records at the settings' side (1920 for 1080p); these source frames stay small.
+        lapse.set_settings(sumi_core::TimeLapseSettings { resolution: 0, quality: 0, hevc: false });
+        let side = time_lapse_side(lapse.settings());
+        assert_eq!(side, 1920, "the default video side is 1080p");
+        // The writer fits a picture within `side` but never upscales it: 64 x 48 stays 64 x 48.
+        assert_eq!(crate::video::fit(64, 48, side, |_, _| true), Some((64, 48)), "fit keeps a small source");
+        let colours = [[255u8, 0, 0], [0, 255, 0], [0, 0, 255]];
+        for colour in colours {
+            let rgba: Vec<u8> = colour.iter().copied().chain(std::iter::once(255)).cycle().take(64 * 48 * 4).collect();
+            assert!(lapse.record(rgba, 64, 48), "native frame recorded");
+        }
+        assert_eq!(lapse.count(), 3, "three distinct frames are stored");
+        for i in 0..3 {
+            let stored = lapse.frame(i).expect("the picture is stored");
+            assert_eq!((stored.width, stored.height), (64, 48), "frame {i} is stored at the source size");
+        }
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+        let name = format!("proof-native-export-{}-{nanos}", std::process::id());
+        let mut ui = TimeLapseUi::default();
+        ui.lapse = Some((art.to_string_lossy().into_owned(), Arc::clone(&lapse)));
+        assert!(ui.export(None, &name).is_none(), "the export starts");
+        assert!(ui.card.busy(), "the export card is up while the video is made");
+        let (rx, exporting) = ui.exporting.as_ref().expect("an export is waiting");
+        assert!(!exporting.cancelled(), "the export was not cancelled");
+        let made =
+            rx.recv_timeout(Duration::from_secs(120)).expect("the export thread ends").expect("the MP4 was made");
+        assert!(made.exists(), "the export wrote {}", made.display());
+        let exports = std::env::temp_dir().join("sumi-exports");
+        let folder = made.parent().and_then(Path::parent);
+        assert_eq!(folder, Some(exports.as_path()), "the export wrote to the app's export folder");
+        assert_eq!(made.file_name().and_then(|n| n.to_str()), Some(format!("{name}.mp4").as_str()));
+        let mut frames = Vec::new();
+        let count = crate::video::read_frames(&made, |rgba, width, height, at| {
+            let pixels = rgba.as_chunks::<4>().0;
+            let samples = [(32, 24), (8, 6), (56, 6), (8, 42), (56, 42)]
+                .map(|(x, y)| pixels.get(y as usize * width as usize + x as usize).copied().unwrap_or([0; 4]));
+            frames.push((width, height, at, samples));
+            true
+        })
+        .expect("the made MP4 is readable by the actual decoder");
+        assert_eq!(count, 3, "all frames read back");
+        assert_eq!(frames.len(), 3);
+        for (i, (width, height, at, _)) in frames.iter().enumerate() {
+            assert_eq!((*width, *height), (64, 48), "frame {i} keeps the source size, within the {side} side");
+            assert!((*at - i as f64 / 30.0).abs() < 1e-3, "frame {i} at {at}");
+        }
+        for (i, (_, _, _, samples)) in frames.iter().enumerate() {
+            let want = colours[i];
+            for pixel in samples {
+                assert!(
+                    (0..3).all(|c| (i32::from(pixel[c]) - i32::from(want[c])).abs() <= 12),
+                    "frame {i}: {pixel:?}, want {want:?}"
+                );
+            }
+        }
+        // The three pictures are distinct, not one frame read back three times.
+        for a in 0..3 {
+            for b in a + 1..3 {
+                let (first, second) = (frames[a].3[0], frames[b].3[0]);
+                assert!(
+                    (0..3).any(|c| (i32::from(first[c]) - i32::from(second[c])).abs() > 100),
+                    "frames {a} and {b} differ: {first:?} vs {second:?}"
+                );
+            }
+        }
+        crate::video::discard(&made);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A real package's time-lapse (its path in SUMI_PACKAGE) taken in as its videos, then
+    /// frames read back from them in order.
+    #[test]
+    #[ignore = "needs a .procreate with a time-lapse, and ffmpeg"]
+    fn a_packages_videos_come_in_as_they_are_and_play_back() {
+        let Ok(package) = std::env::var("SUMI_PACKAGE") else { return };
+        let dir = std::env::temp_dir().join(format!("sumi-take-real-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let artwork = dir.to_string_lossy().into_owned();
+        let started = Instant::now();
+        take_package(std::path::Path::new(&package), &artwork);
+        let lapse = TimeLapse::new(artwork);
+        let clips = lapse.clips();
+        eprintln!(
+            "{} frames in {} videos, {} MB, in {:?}",
+            lapse.count(),
+            clips.len(),
+            lapse.bytes() >> 20,
+            started.elapsed()
+        );
+        assert!(!clips.is_empty());
+        assert_eq!(lapse.count(), clips.last().map_or(0, |c| c.first + c.frames));
+        // across the first video's end, and one far on
+        let first = clips[0].frames;
+        let wanted = vec![0, first - 1, first, first + 1, lapse.count() - 1];
+        let started = Instant::now();
+        let got: Vec<(u32, u32, u32)> = read_in_order(Arc::clone(&lapse), wanted.clone())
+            .frames
+            .iter()
+            .map(|(i, f)| (i, f.width, f.height))
+            .collect();
+        eprintln!("{got:?} in {:?}", started.elapsed());
+        assert_eq!(got.iter().map(|g| g.0).collect::<Vec<_>>(), wanted);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

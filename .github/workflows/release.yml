@@ -1,0 +1,273 @@
+# Release pipeline: pushing a version tag (v0.0.1-beta, v0.2.0, v1.0.0-rc.1, …) builds, and makes a
+# draft GitHub release named after the tag (with an empty "What's Changed" section: fill it in on
+# GitHub and publish the draft) of:
+#
+#   sumi-<version>-windows-x64.msi            the desktop app's installer (packaging/windows)
+#   sumi-<version>-windows-x64-portable.zip   the desktop app to run from anywhere
+#   sumi-<version>-windows-arm64.msi          the same for Windows on ARM (Snapdragon PCs)
+#   sumi-<version>-windows-arm64-portable.zip
+#   sumi-<version>-linux-x86_64.AppImage      any distro (packaging/linux)
+#   sumi-<version>-linux-x86_64.deb           Debian, Ubuntu and the like
+#   sumi-<version>-linux-x86_64.tar.gz        the plain tree
+#   sumi-<version>-macos-universal.dmg        Apple silicon and Intel Macs (packaging/macos):
+#                                                 signed with a Developer ID and notarized when
+#                                                 the APPLE_* secrets exist, else ad hoc
+#   SHA256SUMS.txt                                each file's SHA-256
+#
+# The Mac file is built on the public repository alone (a private one pays for macOS runners'
+# minutes, ten times Linux's), and only once the repository's variable RELEASE_MAC is true. While
+# it is new, its failing leaves its file out rather than holding up the release; so does Windows
+# on ARM's.
+#
+# A manual run (Actions › Release › Run workflow) is a dry run: it builds them at the version in
+# the workspace Cargo.toml and keeps them as the run's artifacts, and releases nothing.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  # never cancel a release halfway; a newer push waits its turn
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_VERSION: "1.99.0"
+
+jobs:
+  desktop:
+    name: Desktop (${{ matrix.name }})
+    strategy:
+      matrix:
+        include:
+          - name: windows-x64
+            os: windows-2025
+          # an older Ubuntu, so the binary runs on any distro with glibc 2.35 or newer
+          - name: linux-x86_64
+            os: ubuntu-22.04
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      DIST: ${{ github.workspace }}/dist
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: v
+        name: Resolve version
+        run: |
+          listed="$(sed -n '/^\[workspace\.package\]/,/^\[/ s/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
+          if [ "$GITHUB_REF_TYPE" = tag ]; then v="${GITHUB_REF_NAME#v}"; else v="$listed"; fi
+          if ! printf '%s' "$v" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'; then
+            echo "::error::'$v' is not a version like 1.2.3 or 1.2.3-beta"
+            exit 1
+          fi
+          # the tag must be the version Cargo.toml names
+          if [ "$v" != "$listed" ]; then
+            echo "::error::the tag is v$v but Cargo.toml says version=$listed: set it before tagging"
+            exit 1
+          fi
+          echo "version=$v" >>"$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-desktop-${{ matrix.name }}
+
+      - name: Install WiX v5
+        if: runner.os == 'Windows'
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          echo "$USERPROFILE/.dotnet/tools" >>"$GITHUB_PATH"
+          "$USERPROFILE/.dotnet/tools/wix" extension add -g WixToolset.UI.wixext/5.0.2 WixToolset.Util.wixext/5.0.2
+
+      - name: Package for Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: ./packaging/windows/package.ps1
+
+      - name: Install nfpm
+        if: runner.os == 'Linux'
+        run: |
+          curl -fsSL https://github.com/goreleaser/nfpm/releases/download/v2.47.0/nfpm_2.47.0_Linux_x86_64.tar.gz | tar -xz -C "$RUNNER_TEMP" nfpm
+          sudo install -m755 "$RUNNER_TEMP/nfpm" /usr/local/bin/nfpm
+          sudo apt-get install -y --no-install-recommends desktop-file-utils >/dev/null
+
+      - name: Package for Linux
+        if: runner.os == 'Linux'
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: bash packaging/linux/package.sh
+
+      - name: Files
+        run: ls -l dist >>"$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-desktop-${{ matrix.name }}
+          path: dist/*
+          if-no-files-found: error
+
+  macos:
+    name: Desktop (macos-universal)
+    # only once the Mac app is to ship: the repository's variable RELEASE_MAC set to true
+    if: ${{ !github.event.repository.private && vars.RELEASE_MAC == 'true' }}
+    continue-on-error: true
+    runs-on: macos-15
+    env:
+      DIST: ${{ github.workspace }}/dist
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: v
+        name: Resolve version
+        run: |
+          listed="$(sed -n '/^\[workspace\.package\]/,/^\[/ s/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
+          if [ "$GITHUB_REF_TYPE" = tag ]; then v="${GITHUB_REF_NAME#v}"; else v="$listed"; fi
+          if ! printf '%s' "$v" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'; then
+            echo "::error::'$v' is not a version like 1.2.3 or 1.2.3-beta"
+            exit 1
+          fi
+          # the tag must be the version Cargo.toml names
+          if [ "$v" != "$listed" ]; then
+            echo "::error::the tag is v$v but Cargo.toml says version=$listed: set it before tagging"
+            exit 1
+          fi
+          echo "version=$v" >>"$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-desktop-macos-universal
+
+      - name: Set up Developer ID signing and notarization
+        # without the secrets (forks, dry runs) the app stays signed ad hoc, not notarized
+        env:
+          APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: bash packaging/macos/signing.sh --setup
+
+      - name: Package for macOS
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: bash packaging/macos/package.sh
+
+      - name: Remove the signing keychain and key
+        if: always()
+        run: bash packaging/macos/signing.sh --cleanup
+
+      - name: Files
+        run: ls -l dist >>"$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-desktop-macos-universal
+          path: dist/*
+          if-no-files-found: error
+
+  # Windows on ARM: cross-built on the x64 runner, which has Visual Studio's ARM64 build tools
+  windows-arm64:
+    name: Desktop (windows-arm64)
+    runs-on: windows-2025
+    continue-on-error: true
+    defaults:
+      run:
+        shell: bash
+    env:
+      DIST: ${{ github.workspace }}/dist
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: v
+        name: Resolve version
+        run: |
+          listed="$(sed -n '/^\[workspace\.package\]/,/^\[/ s/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
+          if [ "$GITHUB_REF_TYPE" = tag ]; then v="${GITHUB_REF_NAME#v}"; else v="$listed"; fi
+          if ! printf '%s' "$v" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'; then
+            echo "::error::'$v' is not a version like 1.2.3 or 1.2.3-beta"
+            exit 1
+          fi
+          # the tag must be the version Cargo.toml names
+          if [ "$v" != "$listed" ]; then
+            echo "::error::the tag is v$v but Cargo.toml says version=$listed: set it before tagging"
+            exit 1
+          fi
+          echo "version=$v" >>"$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: aarch64-pc-windows-msvc
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-desktop-windows-arm64
+
+      - name: Install WiX v5
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          echo "$USERPROFILE/.dotnet/tools" >>"$GITHUB_PATH"
+          "$USERPROFILE/.dotnet/tools/wix" extension add -g WixToolset.UI.wixext/5.0.2 WixToolset.Util.wixext/5.0.2
+
+      - name: Package for Windows on ARM
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+          ARCH: arm64
+        run: ./packaging/windows/package.ps1
+
+      - name: Files
+        run: ls -l dist >>"$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-desktop-windows-arm64
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: GitHub Release
+    needs: [desktop, windows-arm64, macos]
+    # the Mac and Windows on ARM jobs may have been skipped (a private repository) or left out
+    # their files
+    if: ${{ github.ref_type == 'tag' && !cancelled() && needs.desktop.result == 'success' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: dist
+
+      - name: Checksums
+        run: (cd dist && sha256sum -- * >SHA256SUMS.txt && cat SHA256SUMS.txt >>"$GITHUB_STEP_SUMMARY")
+
+      - name: Draft the release
+        run: |
+          gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "$GITHUB_REF_NAME" --notes "## What's Changed" -- dist/*
+          echo "Draft **$GITHUB_REF_NAME** is ready: fill in What's Changed and publish it." >>"$GITHUB_STEP_SUMMARY"

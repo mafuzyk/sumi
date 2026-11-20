@@ -1,0 +1,56 @@
+[workspace]
+resolver = "3"
+members = ["crates/engine", "crates/gpu", "crates/core", "crates/sumi-clip", "android/bindgen", "desktop"]
+default-members = ["crates/engine", "crates/gpu", "crates/core", "crates/sumi-clip", "desktop"]
+# A path dependency that is its own workspace root, kept out of `--workspace`: its tests need
+# `samples/` and sibling crates that are not in this repository.
+exclude = ["crates/clip-core"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+publish = false
+license = "GPL-3.0-or-later"
+
+[workspace.lints.rust]
+# `deny`, not `forbid`: the one place that talks to the platform (the Android bridge's surface
+# module) allows it locally.
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+# Never crash on input: no unwrap/expect/panics/indexing outside tests (see clippy.toml).
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+indexing_slicing = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+dbg_macro = "warn"
+too_many_arguments = "allow"
+
+[workspace.dependencies]
+sumi-engine = { path = "crates/engine" }
+sumi-gpu = { path = "crates/gpu" }
+clip-core = { path = "crates/clip-core" }
+wgpu = { version = "30", default-features = false, features = ["std", "parking_lot", "vulkan", "dx12", "wgsl", "naga-ir"] }
+bytemuck = { version = "1", features = ["derive"] }
+pollster = "0.4"
+log = "0.4"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+png = "0.18"
+miniz_oxide = "0.8"
+parking_lot = "0.12"
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.release]
+lto = "thin"
+debug = false
