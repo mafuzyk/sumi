@@ -609,6 +609,10 @@ mod system {
 /// The frames of the video at `path`, each as straight RGBA rows (`width`, `height`) to `each`
 /// with when it shows (seconds), until `each` says to stop (false); how many it was given.
 pub fn read_frames(path: &Path, mut each: impl FnMut(Vec<u8>, u32, u32, f64) -> bool) -> Result<u32, String> {
+    // Packaging/import can also decode video. Serialize these alongside replays so a
+    // paused preview cannot overlap their native decoder/ffmpeg process.
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let _permit = decoder_permit(&stop, DecoderPriority::Required).expect("uncancelled video reader");
     #[cfg(any(windows, target_os = "macos"))]
     {
         system::read(path, &mut each).map_err(|e| e.to_string())
@@ -619,21 +623,81 @@ pub fn read_frames(path: &Path, mut each: impl FnMut(Vec<u8>, u32, u32, f64) -> 
     }
 }
 
+/// Replay decoding can be restarted from the requested frame if another operation needs
+/// the decoder. Exports and imports cannot drop any frames, so they are not preempted.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DecoderPriority {
+    Replay,
+    Required,
+}
+
+struct DecoderOwner {
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    priority: DecoderPriority,
+}
+
+struct DecoderCoordinator {
+    active: std::sync::Mutex<Option<DecoderOwner>>,
+    available: std::sync::Condvar,
+}
+
+static DECODER_COORDINATOR: std::sync::LazyLock<DecoderCoordinator> = std::sync::LazyLock::new(|| DecoderCoordinator {
+    active: std::sync::Mutex::new(None),
+    available: std::sync::Condvar::new(),
+});
+
+/// The mutex guards only ownership changes, never decoding or callback delivery. There
+/// can still be at most one live video decoder: its permit is held until its child is reaped.
+struct DecoderPermit;
+
+fn decoder_permit(
+    stop: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+    priority: DecoderPriority,
+) -> Option<DecoderPermit> {
+    use std::sync::atomic::Ordering;
+    let mut active = DECODER_COORDINATOR.active.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    loop {
+        if stop.load(Ordering::Acquire) {
+            return None;
+        }
+        if let Some(owner) = active.as_ref() {
+            // A paused replay may be waiting on a full four-frame channel. Interrupt it
+            // (the timed send and FFmpeg watcher observe this flag) instead of waiting
+            // indefinitely for its UI to consume another frame.
+            if owner.priority == DecoderPriority::Replay {
+                owner.stop.store(true, Ordering::Release);
+            }
+            let waited = DECODER_COORDINATOR
+                .available
+                .wait_timeout(active, std::time::Duration::from_millis(20))
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            active = waited.0;
+        } else {
+            *active = Some(DecoderOwner { stop: std::sync::Arc::clone(stop), priority });
+            return Some(DecoderPermit);
+        }
+    }
+}
+
+impl Drop for DecoderPermit {
+    fn drop(&mut self) {
+        let mut active = DECODER_COORDINATOR.active.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        *active = None;
+        DECODER_COORDINATOR.available.notify_all();
+    }
+}
+
 /// Read frames for a replay that may be cancelled while the decoder is blocked.
 /// On Linux both ffprobe and ffmpeg are killed promptly, even in the middle of a raw RGBA frame.
 pub fn read_frames_cancelable(
     path: &Path,
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    priority: DecoderPriority,
     mut each: impl FnMut(Vec<u8>, u32, u32, f64) -> bool,
 ) -> Result<u32, String> {
-    // An old player may be dropped and immediately replaced. Serialize all replay video
-    // decoders across players as well as inside each player's retirement handshake.
-    // Lock only on worker threads; the UI never waits for this permit.
-    static REPLAY_DECODER: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    let _decoder_permit = REPLAY_DECODER.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    if stop.load(std::sync::atomic::Ordering::Acquire) {
+    let Some(_permit) = decoder_permit(&stop, priority) else {
         return Ok(0);
-    }
+    };
     #[cfg(any(windows, target_os = "macos"))]
     {
         use std::sync::atomic::Ordering;

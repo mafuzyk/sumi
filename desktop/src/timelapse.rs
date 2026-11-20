@@ -6,7 +6,7 @@ use std::path::PathBuf;
 #[cfg(test)]
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, TryRecvError, channel, sync_channel};
+use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, TrySendError, channel, sync_channel};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
@@ -249,6 +249,7 @@ It can't be brought back."
                 let frames = read_in_order(
                     Arc::clone(&lapse),
                     picks.clone(),
+                    ReadPurpose::Export,
                     #[cfg(test)]
                     None,
                 );
@@ -433,6 +434,8 @@ impl Drop for Stops {
 struct ReadState {
     finished: bool,
     problem: Option<String>,
+    #[cfg(test)]
+    hit_full_queue: bool,
 }
 
 /// Frames read ahead off the window's thread, and the stop that ends their reading when they go.
@@ -488,8 +491,18 @@ impl Reading {
     /// What it has come to: whether it is done, and the first cause it couldn't read a frame.
     fn state(&self) -> ReadState {
         match self.state.lock() {
-            Ok(state) => ReadState { finished: state.finished, problem: state.problem.clone() },
-            Err(_) => ReadState { finished: true, problem: Some("the frames' reader stopped".into()) },
+            Ok(state) => ReadState {
+                finished: state.finished,
+                problem: state.problem.clone(),
+                #[cfg(test)]
+                hit_full_queue: state.hit_full_queue,
+            },
+            Err(_) => ReadState {
+                finished: true,
+                problem: Some("the frames' reader stopped".into()),
+                #[cfg(test)]
+                hit_full_queue: false,
+            },
         }
     }
 
@@ -521,11 +534,48 @@ fn note_problem(state: &Arc<Mutex<ReadState>>, problem: String) {
     }
 }
 
+/// Never hold the global decoder mutex during delivery. A competing export/player can
+/// preempt a paused replay by setting `stop`, which interrupts the retry loop within
+/// 5 ms. Keep backpressure rather than dropping frames: exports need every image.
+fn deliver_frame(
+    tx: &SyncSender<(u32, ThumbnailImage)>,
+    stop: &AtomicBool,
+    #[cfg(test)] state: &Arc<Mutex<ReadState>>,
+    mut frame: (u32, ThumbnailImage),
+) -> bool {
+    while !stop.load(Ordering::Acquire) {
+        match tx.try_send(frame) {
+            Ok(()) => return true,
+            Err(TrySendError::Disconnected(_)) => return false,
+            Err(TrySendError::Full(pending)) => {
+                #[cfg(test)]
+                if let Ok(mut state) = state.lock() {
+                    state.hit_full_queue = true;
+                }
+                frame = pending;
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
+    }
+    false
+}
+
+#[derive(Clone, Copy)]
+enum ReadPurpose {
+    Replay,
+    Export,
+}
+
 /// Frames `wanted` (rising) of `lapse`, each with its number, read in order off the window's
 /// thread a few ahead: from its videos (decoded as they come, the artwork file's way of keeping them)
 /// and its pictures. A frame that can't be read is left out; what was left out is in [`Reading`]'s
 /// state. It stops once it is dropped or nothing takes them.
-fn read_in_order(lapse: Arc<TimeLapse>, wanted: Vec<u32>, #[cfg(test)] metrics: Option<Arc<ReaderMetrics>>) -> Reading {
+fn read_in_order(
+    lapse: Arc<TimeLapse>,
+    wanted: Vec<u32>,
+    purpose: ReadPurpose,
+    #[cfg(test)] metrics: Option<Arc<ReaderMetrics>>,
+) -> Reading {
     let (tx, rx) = sync_channel(4);
     let state = Arc::new(Mutex::new(ReadState::default()));
     let shared = Arc::clone(&state);
@@ -544,7 +594,13 @@ fn read_in_order(lapse: Arc<TimeLapse>, wanted: Vec<u32>, #[cfg(test)] metrics: 
             let Some(clip) = clips.iter().find(|c| i >= c.first && i - c.first < c.frames) else {
                 match lapse.frame(i) {
                     Some(frame) => {
-                        if tx.send((i, frame)).is_err() {
+                        if !deliver_frame(
+                            &tx,
+                            &stop,
+                            #[cfg(test)]
+                            &shared,
+                            (i, frame),
+                        ) {
                             return;
                         }
                     }
@@ -558,12 +614,22 @@ fn read_in_order(lapse: Arc<TimeLapse>, wanted: Vec<u32>, #[cfg(test)] metrics: 
             let read = crate::video::read_frames_cancelable(
                 std::path::Path::new(&clip.path),
                 Arc::clone(&stop),
+                match purpose {
+                    ReadPurpose::Replay => crate::video::DecoderPriority::Replay,
+                    ReadPurpose::Export => crate::video::DecoderPriority::Required,
+                },
                 |rgba, width, height, _| {
                     let here = at;
                     at += 1;
                     if wanted.get(next) == Some(&here) {
                         next += 1;
-                        if tx.send((here, ThumbnailImage { width, height, rgba })).is_err() {
+                        if !deliver_frame(
+                            &tx,
+                            &stop,
+                            #[cfg(test)]
+                            &shared,
+                            (here, ThumbnailImage { width, height, rgba }),
+                        ) {
                             gone = true;
                             return false;
                         }
@@ -751,6 +817,7 @@ impl Ahead {
             && to >= earliest
             && to < self.until
             && self.stride == stride
+            && !self.reading._stops.0.load(Ordering::Acquire)
             // A 16x reader contains 0,16,32,..., not arbitrary frames between them.
             // A timeline seek to an unrequested frame needs a new window anchored there.
             && (to - self.from) % stride.max(1) == 0
@@ -872,6 +939,11 @@ impl TimeLapsePlayer {
         if self.shown.as_ref().is_some_and(|(i, _)| *i == want) {
             return;
         }
+        // A waiting export/other player may preempt a paused replay. That is an
+        // intentional cancellation, not a corrupt frame or end-of-video error.
+        if self.ahead.as_ref().is_some_and(|a| a.reading._stops.0.load(Ordering::Acquire)) {
+            self.retire_active();
+        }
         // Playback changes speed without a seek; invalidate its previous stride here.
         if self.ahead.as_ref().is_some_and(|a| !a.can_serve(want, want, self.speed)) {
             self.retire_active();
@@ -890,6 +962,7 @@ impl TimeLapsePlayer {
             let reading = read_in_order(
                 Arc::clone(lapse),
                 wanted,
+                ReadPurpose::Replay,
                 #[cfg(test)]
                 Some(Arc::clone(&self.reader_metrics)),
             );
@@ -1306,6 +1379,41 @@ mod tests {
         dir
     }
 
+    #[cfg(unix)]
+    fn has_ffmpeg_and_ffprobe() -> bool {
+        ["ffmpeg", "ffprobe"].into_iter().all(|program| {
+            std::process::Command::new(program)
+                .arg("-version")
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .is_ok_and(|status| status.success())
+        })
+    }
+
+    /// A real on-disk MPEG4 clip. The decoder tests never silently fall back to JPEGs.
+    #[cfg(unix)]
+    fn recorded_video_fixture(root: &Path, frames: u8) -> Arc<TimeLapse> {
+        let art = root.join("artwork");
+        let lapse = TimeLapse::new(art.to_string_lossy().into_owned());
+        for i in 0..frames {
+            assert!(lapse.record([i.wrapping_mul(5), 55, 190, 255].repeat(16), 4, 4));
+        }
+        let plan = lapse.segment_plan().expect("segment plan for recorded frames");
+        let status = std::process::Command::new("ffmpeg")
+            .args(["-nostdin", "-v", "error", "-f", "lavfi", "-i", "color=c=red:s=128x128:r=30"])
+            .arg("-frames:v")
+            .arg(frames.to_string())
+            .args(["-c:v", "mpeg4", "-y"])
+            .arg(&plan.path)
+            .status()
+            .expect("ffmpeg is available");
+        assert!(status.success(), "generate a real MPEG4 fixture");
+        assert!(lapse.segment_made(plan, 128, 128, true).is_none());
+        assert_eq!(lapse.clips().len(), 1, "fixture must use an MP4 rather than JPEG fallback");
+        lapse
+    }
+
     /// The names in a folder, sorted.
     fn names(dir: &Path) -> Vec<String> {
         let mut names: Vec<String> =
@@ -1534,24 +1642,13 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    #[ignore = "requires ffmpeg and ffprobe on PATH for a real video decoder roundtrip"]
     fn consecutive_video_scrubs_reap_ffmpeg_before_starting_the_next_reader() {
-        let root = scratch("real-video-decoder-lifetime");
-        let art = root.join("artwork");
-        let lapse = TimeLapse::new(art.to_string_lossy().into_owned());
-        for i in 0..6 {
-            assert!(lapse.record([i * 35, 55, 190, 255].repeat(16), 4, 4));
+        if !has_ffmpeg_and_ffprobe() {
+            eprintln!("SKIP real FFmpeg seek regression: ffmpeg or ffprobe unavailable on PATH");
+            return;
         }
-        let plan = lapse.segment_plan().expect("segment plan for six frames");
-        let status = std::process::Command::new("ffmpeg")
-            .args(["-nostdin", "-v", "error", "-f", "lavfi", "-i", "color=c=red:s=128x128:r=30"])
-            .args(["-frames:v", "6", "-c:v", "mpeg4", "-y"])
-            .arg(&plan.path)
-            .status()
-            .expect("ffmpeg installed");
-        assert!(status.success(), "create a real segment with ffmpeg");
-        assert!(lapse.segment_made(plan, 128, 128, true).is_none());
-        assert_eq!(lapse.clips().len(), 1, "test must exercise the video decoder, not JPEG fallback");
+        let root = scratch("real-video-decoder-lifetime");
+        let lapse = recorded_video_fixture(&root, 6);
 
         let mut player = TimeLapsePlayer::new(Some(lapse));
         let metrics = Arc::clone(&player.reader_metrics);
@@ -1584,6 +1681,65 @@ mod tests {
         assert_eq!(metrics.started.load(Ordering::SeqCst), 2, "backward seek starts a new decoder");
         assert_eq!(metrics.peak.load(Ordering::SeqCst), 1, "two video readers overlapped");
         drop(player);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn paused_replay_with_full_frame_channel_allows_export_and_cancellation() {
+        if !has_ffmpeg_and_ffprobe() {
+            eprintln!("SKIP full-queue decoder regression: ffmpeg or ffprobe unavailable on PATH");
+            return;
+        }
+        let root = scratch("paused-video-export");
+        let lapse = recorded_video_fixture(&root, 48);
+        // The preview receives only its first frame. Its producer fills the remaining
+        // four slots, then must wait for space without holding the global decoder mutex.
+        let paused = read_in_order(Arc::clone(&lapse), (0..48).collect(), ReadPurpose::Replay, None);
+        assert_eq!(paused.frames.recv_timeout(Duration::from_secs(5)).expect("preview frame").0, 0);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !paused.state().hit_full_queue && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(paused.state().hit_full_queue, "the paused preview did not fill its bounded queue");
+        assert!(!paused.state().finished, "the paused reader must still be holding its decoded frames");
+
+        // An export may request the decoder while that replay has a full queue. It must
+        // preempt the preview, reap its ffmpeg child, and begin producing without the
+        // user ever unpausing or draining the preview channel.
+        let paused_stop = Arc::clone(&paused._stops.0);
+        let export = read_in_order(Arc::clone(&lapse), (0..48).collect(), ReadPurpose::Export, None);
+        assert_eq!(
+            export.frames.recv_timeout(Duration::from_secs(5)).expect("export starts despite paused preview").0,
+            0
+        );
+        assert!(paused_stop.load(Ordering::Acquire), "a competing export must cancel a stalled replay");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !paused.state().finished && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(paused.state().finished, "preempted replay did not finish/reap its decoder");
+
+        // Cancel the export itself with its own queue full, then ensure a fresh replay
+        // can start: a blocked producer must not hold an unreleasable decoder permit.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !export.state().hit_full_queue && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(export.state().hit_full_queue, "export did not reach the full-channel case");
+        let export_state = Arc::clone(&export.state);
+        drop(export);
+        let next = read_in_order(Arc::clone(&lapse), vec![0], ReadPurpose::Replay, None);
+        assert_eq!(
+            next.frames.recv_timeout(Duration::from_secs(5)).expect("a new reader starts after export cancellation").0,
+            0
+        );
+        assert!(
+            export_state.lock().unwrap().finished,
+            "cancelled export must fully stop before another decoder starts"
+        );
+        drop(next);
+        drop(paused);
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -1949,12 +2105,16 @@ mod tests {
         let first = clips[0].frames;
         let wanted = vec![0, first - 1, first, first + 1, lapse.count() - 1];
         let started = Instant::now();
-        let got: Vec<(u32, u32, u32)> =
-            read_in_order(Arc::clone(&lapse), wanted.clone(), Some(Arc::new(ReaderMetrics::default())))
-                .frames
-                .iter()
-                .map(|(i, f)| (i, f.width, f.height))
-                .collect();
+        let got: Vec<(u32, u32, u32)> = read_in_order(
+            Arc::clone(&lapse),
+            wanted.clone(),
+            ReadPurpose::Replay,
+            Some(Arc::new(ReaderMetrics::default())),
+        )
+        .frames
+        .iter()
+        .map(|(i, f)| (i, f.width, f.height))
+        .collect();
         eprintln!("{got:?} in {:?}", started.elapsed());
         assert_eq!(got.iter().map(|g| g.0).collect::<Vec<_>>(), wanted);
         let _ = std::fs::remove_dir_all(&dir);
