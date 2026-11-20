@@ -106,7 +106,8 @@
           # desktop launchers.
           postInstall = ''
             install -Dm644 packaging/linux/sumi.desktop $out/share/applications/sumi.desktop
-            cp -R assets/app-icon/hicolor $out/share/icons/
+            mkdir -p $out/share/icons
+            cp -R assets/app-icon/hicolor $out/share/icons/hicolor
           '';
 
           postFixup = ''
