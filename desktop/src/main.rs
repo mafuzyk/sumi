@@ -25,6 +25,7 @@ mod files;
 #[cfg(target_os = "macos")]
 mod finder;
 mod gallery;
+mod gallery_file_picker;
 mod gesture_controls;
 mod gradient_map;
 mod guide_editor;
@@ -273,6 +274,7 @@ fn main() {
         reading_artwork: None,
         share_once_made: None,
         reading_photo: None,
+        file_picker: None,
         screen: None,
         session: None,
         artwork: None,
@@ -331,6 +333,9 @@ struct App {
     /// A picture made a new artwork (the gallery's Photo), read on a thread of its own: since
     /// when, the gallery folder it goes in, and the reading.
     reading_photo: Option<ReadingPhoto>,
+    /// Linux gallery file chooser: stays in our own window when no portal or external dialog is
+    /// installed. Windows and macOS continue using their native file dialogs.
+    file_picker: Option<(gallery_file_picker::Picker, Option<String>)>,
     screen: Option<Screen>,
     /// The artwork open and its folder in the gallery; none while the gallery shows.
     session: Option<Arc<CanvasSession>>,
@@ -803,8 +808,12 @@ impl App {
             // egui-winit takes the window's own scale each frame: a fixed one must replace it here
             viewport.native_pixels_per_point = Some(forced);
         }
+        let mut editor_file_choice = None;
         let output = screen.egui.egui_ctx().clone().run_ui(raw, |ui| {
             self.ui.show(ui, &session, &mut self.input);
+            if let Some((picker, _)) = self.file_picker.as_mut() {
+                editor_file_choice = picker.show(ui.ctx());
+            }
             // opening: the gallery over it, growing from the artwork's picture
             if let Some(zoom) = self.zoom.as_ref().filter(|z| z.opening) {
                 zoom.over_canvas(ui.ctx(), &mut self.gallery, &mut self.ui.look);
@@ -860,6 +869,15 @@ impl App {
         for action in std::mem::take(&mut self.ui.actions) {
             self.act(action, &session);
         }
+        if let Some(choice) = editor_file_choice
+            && let Some((picker, folder)) = self.file_picker.take()
+            && let gallery_file_picker::Choice::Files(paths) = choice
+        {
+            if picker.kind() == gallery_file_picker::Kind::Artwork {
+                log::info!("editor Open selected {} file(s)", paths.len());
+                self.queue_open_artworks(paths, folder);
+            }
+        }
     }
 
     /// The gallery over the whole window, and what a tap in it asked for.
@@ -870,7 +888,9 @@ impl App {
         self.stroke_sound.follow(None, false);
         let raw = screen.egui.take_egui_input(&screen.window);
         let mut asked = None;
+        let mut file_choice = None;
         let (gallery, interface) = (&mut self.gallery, &mut self.ui);
+        let file_picker = &mut self.file_picker;
         let closing = self.zoom.as_ref().filter(|z| !z.opening);
         let reading = match (&self.importing, &self.reading_artwork, &self.reading_photo) {
             (None, None, None) => None,
@@ -896,6 +916,9 @@ impl App {
             // the New canvas list offers the kinds of artwork the plugins on make
             gallery.kinds = interface.plugins().kinds();
             asked = gallery.show(ui.ctx(), &mut interface.look, &interface.colours);
+            if let Some((picker, _)) = file_picker.as_mut() {
+                file_choice = picker.show(ui.ctx());
+            }
             // a pen's buttons do nothing here, and nothing in the artwork opened next either
             crate::pen::take_button_presses();
             // a share from the gallery shows its card there
@@ -928,6 +951,28 @@ impl App {
         // Project canvas is black while the gallery shows
         if let (Some(p), Some(screen)) = (self.projection.as_mut(), &self.screen) {
             p.draw(&screen.gpu, None);
+        }
+        if let Some(choice) = file_choice {
+            if let Some((picker, folder)) = self.file_picker.take() {
+                match choice {
+                    gallery_file_picker::Choice::Cancel => {}
+                    gallery_file_picker::Choice::Files(paths) if picker.kind() == gallery_file_picker::Kind::Photo => {
+                        if let Some(path) = paths.into_iter().next() {
+                            log::info!("gallery Photo selected {}", path.display());
+                            let reading = std::thread::spawn(move || files::picture_artwork(&path));
+                            self.reading_photo = Some((Instant::now(), folder, reading));
+                        }
+                    }
+                    gallery_file_picker::Choice::Files(paths) => {
+                        log::info!("gallery Import selected {} file(s)", paths.len());
+                        self.import(paths, folder);
+                    }
+                }
+            }
+            return;
+        }
+        if self.file_picker.is_some() {
+            return;
         }
         // while an artwork, a photo or an import is being read, the first tap stands: another
         // artwork, a new one or a photo isn't opened over it
@@ -992,13 +1037,27 @@ impl App {
             }
             // read on a thread of its own (a large photo takes a while); one at a time
             Some(gallery::Asked::Photo(folder)) => {
-                if !busy && let Some(path) = files::pick_picture() {
-                    let reading = std::thread::spawn(move || files::picture_artwork(&path));
-                    self.reading_photo = Some((Instant::now(), folder, reading));
+                if !busy {
+                    if cfg!(target_os = "linux") {
+                        self.file_picker =
+                            Some((gallery_file_picker::Picker::new(gallery_file_picker::Kind::Photo), folder));
+                        if let Some(screen) = &self.screen {
+                            screen.window.request_redraw();
+                        }
+                    } else if let Some(path) = files::pick_picture() {
+                        let reading = std::thread::spawn(move || files::picture_artwork(&path));
+                        self.reading_photo = Some((Instant::now(), folder, reading));
+                    }
                 }
             }
             Some(gallery::Asked::Import(folder)) => {
-                if let Some(paths) = files::pick_import() {
+                if cfg!(target_os = "linux") {
+                    self.file_picker =
+                        Some((gallery_file_picker::Picker::new(gallery_file_picker::Kind::Import), folder));
+                    if let Some(screen) = &self.screen {
+                        screen.window.request_redraw();
+                    }
+                } else if let Some(paths) = files::pick_import() {
                     self.import(paths, folder);
                 }
             }
@@ -1122,6 +1181,13 @@ impl App {
     /// Files dropped on the window: on the canvas its pictures are inserted; on the gallery they
     /// come in as Import brings them (an artwork, a picture, or a model with its files).
     fn take_dropped(&mut self) {
+        if self.file_picker.is_some() || self.ui.file_picker_open() {
+            if !self.dropped.is_empty() {
+                log::warn!("ignoring {} dropped file(s) while a file chooser is open", self.dropped.len());
+                self.dropped.clear();
+            }
+            return;
+        }
         let paths = std::mem::take(&mut self.dropped);
         // a plugin file is asked about wherever it lands
         let (plugins, paths): (Vec<_>, Vec<_>) = paths.into_iter().partition(|p| files::is_plugin_file(p));
@@ -1136,6 +1202,14 @@ impl App {
             return;
         }
         self.import(paths, self.gallery.folder());
+    }
+
+    /// An editor Open joins the same background artwork-reading queue as before.
+    fn queue_open_artworks(&mut self, paths: Vec<std::path::PathBuf>, folder: Option<String>) {
+        match &mut self.importing {
+            Some(importing) => importing.rest.push_back(paths),
+            None => self.importing = Importing::next([paths].into(), folder),
+        }
     }
 
     /// Files brought into the gallery (picked with Import, or dropped on it) into `folder`:
@@ -1445,12 +1519,15 @@ impl App {
             // one picked, beside it: read on a thread of its own as the gallery's Import does (a
             // big file takes seconds), this one open meanwhile and kept as that one opens
             Action::Open => {
-                if let Some(paths) = files::pick_artwork_files(&[]) {
-                    let folder = self.artwork_folder();
-                    match &mut self.importing {
-                        Some(importing) => importing.rest.push_back(paths),
-                        None => self.importing = Importing::next([paths].into(), folder),
+                let folder = self.artwork_folder();
+                if cfg!(target_os = "linux") {
+                    self.file_picker =
+                        Some((gallery_file_picker::Picker::new(gallery_file_picker::Kind::Artwork), folder));
+                    if let Some(screen) = &self.screen {
+                        screen.window.request_redraw();
                     }
+                } else if let Some(paths) = files::pick_artwork_files(&[]) {
+                    self.queue_open_artworks(paths, folder);
                 }
                 None
             }

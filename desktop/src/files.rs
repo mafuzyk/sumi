@@ -592,11 +592,10 @@ pub fn pick_plugin() -> Option<PathBuf> {
 /// A picture the user picks (PNG, JPEG, WebP, GIF, BMP or TIFF), to make a new artwork of
 /// ([`picture_artwork`]).
 pub fn pick_picture() -> Option<PathBuf> {
-    FileDialog::new()
-        .set_title("Photo")
-        .add_filter("Pictures", &["png", "jpg", "jpeg", "webp", "gif", "bmp", "tif", "tiff"])
-        .pick_file()
+    FileDialog::new().set_title("Photo").add_filter("Pictures", PHOTO_EXTENSIONS).pick_file()
 }
+
+const PHOTO_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "webp", "gif", "bmp", "tif", "tiff"];
 
 /// The picture at `path` as a new one-layer artwork its size, named after the file; why not if
 /// it can't be read.
@@ -624,6 +623,23 @@ fn extension_of(path: &Path) -> String {
 /// What a palette's file can be: Swatches, Adobe Swatch Exchange and Photoshop's colour swatches.
 const PALETTE_EXTENSIONS: [&str; 3] = ["swatches", "ase", "aco"];
 
+/// Same file-type policy for the native picker and the Linux in-window fallback.
+/// A folder remains visible in the in-window picker regardless of its extension.
+pub fn gallery_accepts(path: &Path, photo: bool) -> bool {
+    let extension = extension_of(path);
+    if PHOTO_EXTENSIONS.contains(&extension.as_str()) {
+        return true;
+    }
+    !photo
+        && (ARTWORK_EXTENSIONS.contains(&extension.as_str())
+            || extension == sumi_core::legacy::ARTWORK_EXTENSION
+            || PALETTE_EXTENSIONS.contains(&extension.as_str())
+            || is_brush_file(path))
+}
+
+const ARTWORK_EXTENSIONS: &[&str] =
+    &["sumi", "procreate", "psd", "psb", "clip", "kra", "pdf", "obj", "usdz", "usdc", "usda", "usd", "zip", "mtl"];
+
 /// Whether `path` is a palette's file, by its name.
 pub fn is_palette_file(path: &Path) -> bool {
     PALETTE_EXTENSIONS.contains(&extension_of(path).as_str())
@@ -640,32 +656,13 @@ pub fn pick_import() -> Option<Vec<PathBuf>> {
 
 /// Artworks, models and the files with extensions `more`, as the user picks them.
 pub fn pick_artwork_files(more: &[&str]) -> Option<Vec<PathBuf>> {
-    let artworks = [
-        "sumi",
-        sumi_core::legacy::ARTWORK_EXTENSION,
-        "procreate",
-        "psd",
-        "psb",
-        "clip",
-        "kra",
-        "pdf",
-        "png",
-        "obj",
-        "usdz",
-        "usdc",
-        "usda",
-        "usd",
-        "zip",
-        "mtl",
-        "jpg",
-        "jpeg",
-        "webp",
-        "gif",
-        "bmp",
-        "tif",
-        "tiff",
-    ];
-    let all: Vec<&str> = artworks.iter().chain(more).copied().collect();
+    let all: Vec<&str> = ARTWORK_EXTENSIONS
+        .iter()
+        .chain([sumi_core::legacy::ARTWORK_EXTENSION].iter())
+        .chain(PHOTO_EXTENSIONS.iter())
+        .chain(more)
+        .copied()
+        .collect();
     FileDialog::new().set_title("Import").add_filter("Artworks and models", &all).pick_files()
 }
 

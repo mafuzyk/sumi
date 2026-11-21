@@ -232,6 +232,8 @@ pub struct Interface {
     canvas_info: Option<crate::canvas_info::CanvasInfo>,
     /// The reference window.
     reference: crate::reference::Reference,
+    /// Linux in-window Insert File/Photo dialog, keeping the private-layer preference.
+    insert_picker: Option<(crate::gallery_file_picker::Picker, bool)>,
     /// Crop and Resize.
     crop: crate::crop::Crop,
     /// The drawing guide's editor.
@@ -352,6 +354,7 @@ impl Default for Interface {
             gesture_controls: crate::gesture_controls::GestureControls::default(),
             canvas_info: None,
             reference: crate::reference::Reference::default(),
+            insert_picker: None,
             crop: crate::crop::Crop::default(),
             guide_editor: crate::guide_editor::GuideEditor::default(),
             artwork_dir: None,
@@ -421,6 +424,7 @@ impl Interface {
     /// `session` is shown now (at `scale` window pixels a point, in a window `window` points
     /// big): it paints in the colour chosen.
     pub fn opened(&mut self, session: &Arc<CanvasSession>, scale: f32, window: egui::Vec2) {
+        self.insert_picker = None;
         // each artwork its own Reference window, none if it never had one
         self.reference.restore(session);
         self.model = session.model_info().is_some();
@@ -465,6 +469,8 @@ impl Interface {
     /// The artwork is put away (to the gallery, for another, or with the window): brushes coming
     /// in from files are waited for, Recolor ends keeping what it filled, and Layer Opacity ends.
     pub fn closing(&mut self, session: &CanvasSession) {
+        self.insert_picker = None;
+        self.reference.dismiss_file_picker();
         // a plugin's panel goes with the artwork it was open over
         self.prefs.plugins.close_panel();
         self.plugin_panel_held = None;
@@ -579,6 +585,14 @@ impl Interface {
         let typing = self.typing;
         _ = self.show_frame(ui, session, input);
         let ctx = ui.ctx();
+        let inserted = self.insert_picker.as_mut().and_then(|(picker, _)| picker.show(ctx));
+        if let Some(choice) = inserted
+            && let Some((_, private)) = self.insert_picker.take()
+            && let crate::gallery_file_picker::Choice::Files(paths) = choice
+        {
+            log::info!("editor Insert selected {} file(s), private={private}", paths.len());
+            self.insert_files(session, paths, private);
+        }
         if !typing && escape_untaken(ctx) && self.canvas_shown() && input.idle() {
             session.settle_upright();
         }
@@ -1903,6 +1917,15 @@ impl Interface {
     /// frames each on a layer of its own, for the timeline), as Insert a file and Insert a photo
     /// do.
     fn insert_picture(&mut self, session: &Arc<CanvasSession>, photo: bool, private: bool) {
+        if cfg!(target_os = "linux") {
+            let kind = if photo {
+                crate::gallery_file_picker::Kind::InsertPhoto
+            } else {
+                crate::gallery_file_picker::Kind::Insert
+            };
+            self.insert_picker = Some((crate::gallery_file_picker::Picker::new(kind), private));
+            return;
+        }
         let title = if photo { "Insert a photo" } else { "Insert a file" };
         let Some(path) = rfd::FileDialog::new()
             .set_title(title)
@@ -1912,6 +1935,11 @@ impl Interface {
             return;
         };
         self.insert_files(session, vec![path], private);
+    }
+
+    /// Prevent a drop onto a Linux file chooser from being inserted behind the modal.
+    pub fn file_picker_open(&self) -> bool {
+        self.insert_picker.is_some() || self.reference.file_picker_open()
     }
 
     /// Files dropped on the canvas: a picture inserted as Insert a file does (several each a layer,

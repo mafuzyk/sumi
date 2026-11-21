@@ -4,6 +4,7 @@
 //! picture, and a click on it slides them away and back. Each artwork keeps its own window (the
 //! core saves it with the artwork): shown, what it shows, its size and place, and its picture.
 
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 use egui::{Align2, Color32, Id, Order, Pos2, Rect, Sense, Stroke, TextureHandle, Vec2, pos2, vec2};
@@ -12,6 +13,7 @@ use sumi_core::{
     reference_picture_rect, reference_view_pinched, reference_window_fitted, reference_window_size,
 };
 
+use crate::gallery_file_picker::{Choice, Kind, Picker};
 use crate::icons;
 use crate::look::{Look, Themed, Weight, argb, pc, text};
 
@@ -154,6 +156,8 @@ pub struct Reference {
     /// shows.
     kept: Option<ReferenceWindowState>,
     picture_due: Option<Vec<u8>>,
+    /// In-window Linux file chooser, independent of the XDG portal and Zenity.
+    file_picker: Option<Picker>,
 }
 
 impl Default for Reference {
@@ -182,11 +186,20 @@ impl Default for Reference {
             click: None,
             kept: None,
             picture_due: None,
+            file_picker: None,
         }
     }
 }
 
 impl Reference {
+    pub fn file_picker_open(&self) -> bool {
+        self.file_picker.is_some()
+    }
+
+    pub fn dismiss_file_picker(&mut self) {
+        self.file_picker = None;
+    }
+
     /// The window as artwork `session` left it, nothing of another's kept (none if it never had
     /// one).
     pub fn restore(&mut self, session: &CanvasSession) {
@@ -282,14 +295,7 @@ impl Reference {
         }
     }
 
-    fn import(&mut self, ctx: &egui::Context, session: &CanvasSession) {
-        let Some(path) = rfd::FileDialog::new()
-            .set_title("Import Image")
-            .add_filter("Pictures", &["png", "jpg", "jpeg", "webp", "gif", "bmp", "tif", "tiff"])
-            .pick_file()
-        else {
-            return;
-        };
+    fn import_path(&mut self, ctx: &egui::Context, session: &CanvasSession, path: &Path) {
         match image::open(path) {
             Ok(picture) => {
                 let picture = if picture.width().max(picture.height()) > MOST_PICTURE {
@@ -303,9 +309,23 @@ impl Reference {
                 let mut png = std::io::Cursor::new(Vec::new());
                 if picture.to_rgba8().write_to(&mut png, image::ImageFormat::Png).is_ok() {
                     session.set_reference_picture(png.into_inner());
+                    log::info!("reference image imported: {}", path.display());
                 }
             }
             Err(_) => crate::files::tell("Can't import it", "This picture can't be opened."),
+        }
+    }
+
+    fn import(&mut self, ctx: &egui::Context, session: &CanvasSession) {
+        if cfg!(target_os = "linux") {
+            self.file_picker = Some(Picker::new(Kind::Reference));
+            ctx.request_repaint();
+        } else if let Some(path) = rfd::FileDialog::new()
+            .set_title("Import Image")
+            .add_filter("Pictures", &["png", "jpg", "jpeg", "webp", "gif", "bmp", "tif", "tiff"])
+            .pick_file()
+        {
+            self.import_path(ctx, session, &path);
         }
     }
 
@@ -547,6 +567,18 @@ impl Reference {
         if import {
             self.import(ctx, session);
         }
+        if let Some(picker) = self.file_picker.as_mut() {
+            match picker.show(ctx) {
+                Some(Choice::Cancel) => self.file_picker = None,
+                Some(Choice::Files(paths)) => {
+                    self.file_picker = None;
+                    if let Some(path) = paths.first() {
+                        self.import_path(ctx, session, path);
+                    }
+                }
+                None => {}
+            }
+        }
         picked
     }
 
@@ -701,6 +733,24 @@ const SCROLL_ZOOM: f32 = 0.005;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reference_import_stores_and_displays_a_real_image() {
+        let folder = std::env::temp_dir().join(format!("sumi-reference-import-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).unwrap();
+        let path = folder.join("reference.png");
+        image::RgbaImage::from_pixel(14, 9, image::Rgba([33, 88, 123, 255])).save(&path).unwrap();
+        let session = CanvasSession::new(64, 64);
+        let ctx = egui::Context::default();
+        let mut reference = Reference { on: true, mode: Mode::Image, ..Reference::default() };
+        reference.import_path(&ctx, &session, &path);
+        assert!(reference.image.is_some(), "the reference texture must be ready");
+        assert_eq!(reference.image_pixels.as_ref().map(|pixels| (pixels.width, pixels.height)), Some((14, 9)));
+        let png = session.reference_picture().expect("image persisted on canvas session");
+        let restored = image::load_from_memory(&png).unwrap();
+        assert_eq!((restored.width(), restored.height()), (14, 9));
+        std::fs::remove_dir_all(folder).unwrap();
+    }
 
     /// Where the window is after a drag by the mouse from `grab` (points from its top left) by `by`.
     fn dragged_by(grab: Vec2, by: Vec2) -> Option<(Pos2, Pos2)> {

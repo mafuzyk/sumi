@@ -3377,6 +3377,29 @@ mod tests {
         asked
     }
 
+    #[test]
+    fn gallery_open_import_and_photo_buttons_dispatch_the_correct_file_request() {
+        let screen = Rect::from_min_size(pos2(0.0, 0.0), vec2(1440.0, 900.0));
+        // Header controls remain wired on the Start Deck as well as in the gallery.
+        for (label, at) in [
+            ("Open an existing artwork", pos2(210.0, 574.0)),
+            ("Import", pos2(1261.0, 34.0)),
+            ("Photo", pos2(1328.0, 34.0)),
+        ] {
+            let root = scratch("picker-action");
+            let mut gallery =
+                Gallery::with_store(sumi_core::ArtworkStore::open(root.to_string_lossy().into_owned()), Vec::new());
+            let (ctx, mut look, mut time) = (egui::Context::default(), crate::look::Look::default(), 0.0);
+            crate::look::install_fonts(&ctx);
+            let asked = click_at(&mut gallery, &ctx, &mut look, screen, &mut time, at);
+            match label {
+                "Photo" => assert!(matches!(asked, Some(Asked::Photo(_))), "{label} did not ask for a photo"),
+                _ => assert!(matches!(asked, Some(Asked::Import(_))), "{label} did not ask for import"),
+            }
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
     fn key(key: egui::Key) -> Event {
         Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE }
     }
