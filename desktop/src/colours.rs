@@ -250,6 +250,8 @@ impl HarmonyKind {
 
 /// The colours the panel shows and changes.
 pub struct Colours {
+    palette_file: Option<crate::file_chooser::Response>,
+    palette_from_photo: bool,
     /// The colour painted with, as hue, saturation and brightness of its sRGB values (0..1).
     pub hsv: [f32; 3],
     /// The colour not in use: masks' (black at first) while a layer of another kind is current,
@@ -343,6 +345,8 @@ impl Default for Colours {
     fn default() -> Colours {
         let kept = crate::files::kept_colours().unwrap_or(([0.59, 1.0, 1.0], [0.0; 3]));
         Colours {
+            palette_file: None,
+            palette_from_photo: false,
             // as last left, else the blue a first start has (as Android's)
             hsv: kept.0,
             other: kept.1,
@@ -380,6 +384,23 @@ impl Default for Colours {
 }
 
 impl Colours {
+    /// Complete an in-window palette import even if the palette menu has closed.
+    pub fn poll_palette_file(&mut self) {
+        if let Some(paths) = crate::file_chooser::poll(&mut self.palette_file)
+            && let Some(path) = paths.first()
+        {
+            match std::fs::read(path) {
+                Ok(bytes) if self.palette_from_photo => self.palette_from_picture(&bytes),
+                Ok(bytes) => {
+                    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                    if !self.palettes.import_file(bytes.clone(), Some(name)) {
+                        self.palette_from_picture(&bytes);
+                    }
+                }
+                Err(e) => crate::files::tell_later("Can't import palette", &e.to_string()),
+            }
+        }
+    }
     /// The colour model the disc, Classic and the Value sliders work in.
     pub fn model(&self) -> ColourModel {
         self.pickers.model
@@ -1891,14 +1912,27 @@ impl Colours {
         match i {
             0 => self.palettes.add(),
             1 => {
-                let Some((bytes, name)) = crate::files::pick_file("New palette from a file") else { return };
-                if !self.palettes.import_file(bytes.clone(), Some(name)) {
-                    self.palette_from_picture(&bytes);
+                if cfg!(target_os = "linux") {
+                    self.palette_from_photo = false;
+                    self.palette_file = Some(crate::file_chooser::open("New palette from a file", &[]));
+                } else {
+                    let Some((bytes, name)) = crate::files::pick_file("New palette from a file") else { return };
+                    if !self.palettes.import_file(bytes.clone(), Some(name)) {
+                        self.palette_from_picture(&bytes);
+                    }
                 }
             }
             2 => {
-                let Some((bytes, _)) = crate::files::pick_file("New palette from a picture") else { return };
-                self.palette_from_picture(&bytes);
+                if cfg!(target_os = "linux") {
+                    self.palette_from_photo = true;
+                    self.palette_file = Some(crate::file_chooser::open(
+                        "New palette from a picture",
+                        &["png", "jpg", "jpeg", "webp", "gif", "bmp"],
+                    ));
+                } else {
+                    let Some((bytes, _)) = crate::files::pick_file("New palette from a picture") else { return };
+                    self.palette_from_picture(&bytes);
+                }
             }
             _ => self.palettes.restore_examples(),
         }

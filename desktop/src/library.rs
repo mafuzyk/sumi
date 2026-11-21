@@ -159,6 +159,9 @@ enum Deleting {
 
 #[derive(Default)]
 pub struct Library {
+    /// File imported from the Linux in-window chooser, even when the menu closed.
+    imported_file: Option<crate::file_chooser::Response>,
+    imported_library: bool,
     /// The set shown, once one is tapped (else the current brush's).
     shown_set: Option<usize>,
     /// The Recent set is shown instead (the brushes last painted with, and those pinned there);
@@ -266,6 +269,15 @@ impl Library {
     /// menu, a question, a set being renamed, a brush pressed, the studio asked for or open:
     /// `studio_open`), which brushes added at the top would move; they wait for that to end.
     pub fn added(&mut self, session: &CanvasSession, studio_open: bool) -> Vec<(bool, bool)> {
+        if let Some(paths) = crate::file_chooser::poll(&mut self.imported_file)
+            && let Some(path) = paths.first()
+        {
+            let name = path.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
+            match std::fs::read(path) {
+                Ok(bytes) => self.add_brushes(vec![(bytes, name)], self.imported_library),
+                Err(e) => crate::files::tell_later("Can't import brushes", &e.to_string()),
+            }
+        }
         let holding = self.modal() || self.renaming_set.is_some() || self.press.is_some() || self.studio.is_some();
         if studio_open || holding {
             return Vec::new();
@@ -820,9 +832,13 @@ impl Library {
                 self.library_changed();
             }
             _ => {
-                let Some(file) = crate::files::pick_file("Import brushes") else { return };
                 self.shown_set = Some(shown);
-                self.add_brushes(vec![file], false);
+                if cfg!(target_os = "linux") {
+                    self.imported_library = false;
+                    self.imported_file = Some(crate::file_chooser::open("Import brushes", &[]));
+                } else if let Some(file) = crate::files::pick_file("Import brushes") {
+                    self.add_brushes(vec![file], false);
+                }
             }
         }
     }

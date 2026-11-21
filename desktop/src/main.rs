@@ -21,6 +21,7 @@ mod crop;
 mod curve;
 mod custom_canvas;
 mod export_card;
+mod file_chooser;
 mod files;
 #[cfg(target_os = "macos")]
 mod finder;
@@ -88,6 +89,20 @@ const FALLBACK_CANVAS: (u32, u32) = (1920, 1080);
 
 /// A picture being made a new artwork: since when, the gallery folder it goes in, and its reading.
 type ReadingPhoto = (Instant, Option<String>, std::thread::JoinHandle<Result<Arc<CanvasSession>, String>>);
+
+enum DestinationAction {
+    SaveAs,
+    Export(files::Format, u8),
+    PluginExport(String),
+    Share(Vec<sumi_core::GalleryArtwork>, files::Format, u8),
+}
+
+struct AwaitingDestination {
+    response: Option<file_chooser::Response>,
+    action: DestinationAction,
+    /// Export must not silently switch to another artwork while a chooser is open.
+    source: Option<Arc<CanvasSession>>,
+}
 
 /// An artwork in the gallery being opened: since when, its folder, the moving format it is
 /// opened to be shared as (the gallery's Share), and its reading.
@@ -275,6 +290,7 @@ fn main() {
         share_once_made: None,
         reading_photo: None,
         file_picker: None,
+        destination: None,
         screen: None,
         session: None,
         artwork: None,
@@ -336,6 +352,8 @@ struct App {
     /// Linux gallery file chooser: stays in our own window when no portal or external dialog is
     /// installed. Windows and macOS continue using their native file dialogs.
     file_picker: Option<(gallery_file_picker::Picker, Option<String>)>,
+    /// Nonblocking Linux Save/Export/Share destination selector.
+    destination: Option<AwaitingDestination>,
     screen: Option<Screen>,
     /// The artwork open and its folder in the gallery; none while the gallery shows.
     session: Option<Arc<CanvasSession>>,
@@ -681,6 +699,69 @@ impl ApplicationHandler for App {
 }
 
 impl App {
+    fn share_from_gallery(&mut self, list: Vec<sumi_core::GalleryArtwork>, format: files::Format, quality: u8) {
+        if cfg!(target_os = "linux")
+            && !list.is_empty()
+            && !self.ui.export_card.busy()
+            && self.destination.is_none()
+            && !file_chooser::busy()
+        {
+            let response = if let [one] = list.as_slice() {
+                let name = files::export_suggested_name(one.name.clone(), format);
+                file_chooser::save(&format!("Share {}", format.name()), format.extension(), &name)
+            } else {
+                file_chooser::folder(&format!("Share as {}", format.name()))
+            };
+            self.destination = Some(AwaitingDestination {
+                response: Some(response),
+                action: DestinationAction::Share(list, format, quality),
+                source: None,
+            });
+            if let Some(screen) = &self.screen {
+                screen.window.request_redraw();
+            }
+        } else if !cfg!(target_os = "linux") {
+            files::share_artworks(&list, format, quality, &mut self.ui.export_card);
+        }
+    }
+
+    fn complete_destination(&mut self) {
+        let Some(pending) = self.destination.as_mut() else { return };
+        let selected = file_chooser::poll(&mut pending.response);
+        if pending.response.is_some() {
+            return;
+        }
+        let pending = self.destination.take().expect("pending destination exists");
+        let Some(path) = selected.and_then(|paths| paths.into_iter().next()) else { return };
+        if let Some(source) = pending.source
+            && !self.session.as_ref().is_some_and(|current| Arc::ptr_eq(current, &source))
+        {
+            log::warn!("ignoring destination: the artwork changed before the file was selected");
+            return;
+        }
+        match pending.action {
+            DestinationAction::SaveAs => {
+                if let Some(session) = self.session.clone() {
+                    files::save_at(&session, &mut self.ui, path);
+                }
+            }
+            DestinationAction::Export(format, quality) => {
+                if let Some(session) = self.session.clone() {
+                    let folder = self.ui.artwork_dir.clone().unwrap_or_default();
+                    files::export_to(&session, format, &path, &folder, quality, &mut self.ui.export_card);
+                }
+            }
+            DestinationAction::PluginExport(key) => {
+                if let Some(session) = self.session.clone() {
+                    files::export_plugin_to(&session, &key, &path, &mut self.ui.export_card);
+                }
+            }
+            DestinationAction::Share(list, format, quality) => {
+                files::share_artworks_to(&list, format, quality, &mut self.ui.export_card, path);
+            }
+        }
+    }
+
     /// Shows `session` in the window, in place of the artwork open.
     fn show(&mut self, session: Arc<CanvasSession>) {
         let Some(screen) = self.screen.as_mut() else { return };
@@ -759,6 +840,7 @@ impl App {
             self.again = Some(Instant::now() + Duration::from_millis(100));
             return;
         }
+        self.complete_destination();
         self.take_dropped();
         self.imported();
         self.artwork_read();
@@ -811,6 +893,7 @@ impl App {
         let mut editor_file_choice = None;
         let output = screen.egui.egui_ctx().clone().run_ui(raw, |ui| {
             self.ui.show(ui, &session, &mut self.input);
+            file_chooser::show(ui.ctx());
             if let Some((picker, _)) = self.file_picker.as_mut() {
                 editor_file_choice = picker.show(ui.ctx());
             }
@@ -916,6 +999,7 @@ impl App {
             // the New canvas list offers the kinds of artwork the plugins on make
             gallery.kinds = interface.plugins().kinds();
             asked = gallery.show(ui.ctx(), &mut interface.look, &interface.colours);
+            file_chooser::show(ui.ctx());
             if let Some((picker, _)) = file_picker.as_mut() {
                 file_choice = picker.show(ui.ctx());
             }
@@ -1022,11 +1106,9 @@ impl App {
                     None => files::say("The plugin couldn't make this artwork."),
                 }
             }
-            Some(gallery::Asked::Share(list, format)) => {
-                files::share_artworks(&list, format, 100, &mut self.ui.export_card);
-            }
+            Some(gallery::Asked::Share(list, format)) => self.share_from_gallery(list, format, 100),
             Some(gallery::Asked::SharePdf(list, quality)) => {
-                files::share_artworks(&list, files::Format::Pdf, quality, &mut self.ui.export_card);
+                self.share_from_gallery(list, files::Format::Pdf, quality);
             }
             Some(gallery::Asked::DragOut(artwork)) => self.drag_out(&artwork),
             // opened (read as Open reads it), then shared
@@ -1051,7 +1133,7 @@ impl App {
                 }
             }
             Some(gallery::Asked::Import(folder)) => {
-                if cfg!(target_os = "linux") {
+                if cfg!(target_os = "linux") && self.destination.is_none() && !file_chooser::busy() {
                     self.file_picker =
                         Some((gallery_file_picker::Picker::new(gallery_file_picker::Kind::Import), folder));
                     if let Some(screen) = &self.screen {
@@ -1181,7 +1263,7 @@ impl App {
     /// Files dropped on the window: on the canvas its pictures are inserted; on the gallery they
     /// come in as Import brings them (an artwork, a picture, or a model with its files).
     fn take_dropped(&mut self) {
-        if self.file_picker.is_some() || self.ui.file_picker_open() {
+        if self.file_picker.is_some() || self.ui.file_picker_open() || file_chooser::busy() {
             if !self.dropped.is_empty() {
                 log::warn!("ignoring {} dropped file(s) while a file chooser is open", self.dropped.len());
                 self.dropped.clear();
@@ -1487,6 +1569,12 @@ impl App {
     }
 
     fn act(&mut self, action: Action, session: &Arc<CanvasSession>) {
+        // Keyboard shortcuts must not switch artworks or queue exports behind
+        // an in-window file chooser while its original session is selected.
+        if file_chooser::busy() {
+            log::debug!("ignoring action while a file chooser is open");
+            return;
+        }
         let opened = match action {
             Action::Gallery => {
                 if self.leave_artwork() {
@@ -1536,22 +1624,81 @@ impl App {
                 None
             }
             Action::SaveAs => {
-                files::save(session, &mut self.ui, true);
+                if cfg!(target_os = "linux") && self.destination.is_none() && !file_chooser::busy() {
+                    let name = files::export_suggested_name(session.name(), files::Format::Sumi);
+                    self.destination = Some(AwaitingDestination {
+                        response: Some(file_chooser::save("Save Sumi artwork", "sumi", &name)),
+                        action: DestinationAction::SaveAs,
+                        source: Some(Arc::clone(session)),
+                    });
+                } else if !cfg!(target_os = "linux") {
+                    files::save(session, &mut self.ui, true);
+                }
                 None
             }
             Action::Export(format, pdf_quality) => {
-                files::export(session, format, self.ui.artwork_dir.as_deref(), pdf_quality, &mut self.ui.export_card);
+                if cfg!(target_os = "linux")
+                    && !self.ui.export_card.busy()
+                    && self.destination.is_none()
+                    && !file_chooser::busy()
+                {
+                    let response = if matches!(
+                        format,
+                        files::Format::LayerPngs | files::Format::ChosenLayerPngs | files::Format::ModelTextures
+                    ) {
+                        file_chooser::folder("Choose folder for exported images")
+                    } else {
+                        let name = files::export_suggested_name(session.name(), format);
+                        file_chooser::save(&format!("Export {}", format.name()), format.extension(), &name)
+                    };
+                    self.destination = Some(AwaitingDestination {
+                        response: Some(response),
+                        action: DestinationAction::Export(format, pdf_quality),
+                        source: Some(Arc::clone(session)),
+                    });
+                } else if !cfg!(target_os = "linux") {
+                    files::export(
+                        session,
+                        format,
+                        self.ui.artwork_dir.as_deref(),
+                        pdf_quality,
+                        &mut self.ui.export_card,
+                    );
+                }
                 None
             }
             Action::PluginExport(i) => {
                 if let Some(export) = session.plugin_exports().into_iter().nth(usize::from(i)) {
-                    files::export_plugin(session, &export.key, &mut self.ui.export_card);
+                    if cfg!(target_os = "linux")
+                        && !self.ui.export_card.busy()
+                        && self.destination.is_none()
+                        && !file_chooser::busy()
+                    {
+                        let extension = export.extension;
+                        let name = format!("{}.{}", sumi_core::export_file_name(session.name(), false), extension);
+                        self.destination = Some(AwaitingDestination {
+                            response: Some(file_chooser::save(&format!("Export {}", export.label), &extension, &name)),
+                            action: DestinationAction::PluginExport(export.key),
+                            source: Some(Arc::clone(session)),
+                        });
+                    } else if !cfg!(target_os = "linux") {
+                        files::export_plugin(session, &export.key, &mut self.ui.export_card);
+                    }
                 }
                 None
             }
         };
         if let Some(session) = opened {
             self.show(session);
+        }
+        if self.destination.is_some()
+            && file_chooser::busy()
+            && let Some(screen) = &self.screen
+        {
+            // The action is processed *after* this frame's egui pass. Without
+            // this wakeup the queued chooser can remain invisible until an
+            // unrelated pointer or window event arrives.
+            screen.window.request_redraw();
         }
     }
 }

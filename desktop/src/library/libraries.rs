@@ -357,6 +357,9 @@ impl Library {
             if session.new_brush_library().is_none() {
                 log::error!("a new brush library couldn't be made");
             }
+        } else if cfg!(target_os = "linux") {
+            self.imported_library = true;
+            self.imported_file = Some(crate::file_chooser::open("Import a brush library", &[]));
         } else if let Some(file) = crate::files::pick_file("Import a brush library") {
             // read on a thread of its own, then added as a library and brought into use
             self.add_brushes(vec![file], true);

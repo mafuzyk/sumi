@@ -52,6 +52,16 @@ pub(crate) fn discard(path: &Path) {
     }
 }
 
+/// Owns a temporary rendered video while the in-window Save dialog is open.
+/// A cancelled dialog, a closed application or a finished copy all discard it.
+pub(crate) struct OwnedExport(pub(crate) PathBuf);
+
+impl Drop for OwnedExport {
+    fn drop(&mut self) {
+        discard(&self.0);
+    }
+}
+
 /// `bits_per_pixel` bits a pixel a second, at least a megabit.
 fn bit_rate(width: u32, height: u32, bits_per_pixel: u32) -> u32 {
     width.saturating_mul(height).saturating_mul(bits_per_pixel).max(1_000_000)
@@ -1262,6 +1272,20 @@ mod ffmpeg {
 #[cfg(test)]
 mod tests {
     use std::path::Path;
+
+    #[test]
+    fn an_abandoned_save_dialog_disposes_its_owned_temp_video() {
+        let made = super::export_temp_path("dialog-cancel-test", "mp4");
+        std::fs::create_dir_all(made.parent().unwrap()).unwrap();
+        std::fs::write(&made, b"not saved yet").unwrap();
+        let parent = made.parent().unwrap().to_path_buf();
+        {
+            let _owned = super::OwnedExport(made.clone());
+            assert!(made.is_file());
+        }
+        assert!(!made.exists(), "a dropped file chooser cannot leak a temporary video");
+        assert!(!parent.exists(), "its unique temporary directory is also removed");
+    }
 
     /// Two exports, even of the same artwork, get paths of their own; a name can't leave the
     /// folder or run past the filesystem's name limit.

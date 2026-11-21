@@ -563,9 +563,34 @@ impl AnimatedExport {
         if self.card.show(ctx, look) == Some(crate::export_card::Ended::Made)
             && let Some((settings, path, _)) = &self.made
             && *settings == self.settings()
-            && save_as(path, self.format)
         {
-            return Some(Ended::Closed);
+            if cfg!(target_os = "linux") {
+                // Move ownership of the temporary output out of this panel: Drop
+                // normally discards it. The pending chooser must own it until
+                // the file is saved or the user cancels.
+                let (_, path, _) = self.made.take().expect("the rendered video was ready");
+                let made = crate::video::OwnedExport(path);
+                let name = made.0.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                let format = self.format;
+                crate::file_chooser::save_with_result(
+                    &format!("Share as {}", format.title()),
+                    format.extension(),
+                    &name,
+                    move |selected| {
+                        if let Some(path) = selected {
+                            crate::files::write_meanwhile(false, move || {
+                                if let Err(e) = save_made(&made.0, &path) {
+                                    crate::files::tell_later("Can't export", &e.to_string());
+                                }
+                            });
+                        }
+                    },
+                );
+                return Some(Ended::Closed);
+            }
+            if save_as(path, self.format) {
+                return Some(Ended::Closed);
+            }
         }
         None
     }

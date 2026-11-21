@@ -329,6 +329,8 @@ pub struct Layers {
     channel_colours: [Option<[f32; 3]>; 3],
     mesh_pictures: HashMap<usize, TextureHandle>,
     channel_pictures: HashMap<(u32, u64), TextureHandle>,
+    map_dialog: Option<crate::file_chooser::Response>,
+    map_target: Option<(u64, u32)>,
     /// The layer whose tray is pictured, as it was then: an undo or a stroke pictures it afresh.
     channel_pictured: Option<(u64, u64)>,
     last_frame: u64,
@@ -420,6 +422,8 @@ impl Layers {
         self.channel_colours = [None; 3];
         self.mesh_pictures.clear();
         self.channel_pictures.clear();
+        self.map_dialog = None;
+        self.map_target = None;
     }
 
     /// A menu of the panel's is open: a press elsewhere only closes it.
@@ -521,6 +525,15 @@ impl Layers {
         gestures: bool,
         backdrops: &mut Vec<f32>,
     ) -> Rect {
+        if let Some(paths) = crate::file_chooser::poll(&mut self.map_dialog)
+            && let Some((id, channel)) = self.map_target.take()
+            && let Some(path) = paths.first()
+        {
+            self.replace_map_path(session, colours, id, channel, path);
+        }
+        if self.map_dialog.is_none() {
+            self.map_target = None;
+        }
         if !gestures {
             self.clear_gestures();
         }
@@ -1339,7 +1352,25 @@ impl Layers {
 
     /// Layer `id`'s content in `channel` replaced by a picture chosen now.
     fn replace_map(&mut self, session: &CanvasSession, colours: &mut Colours, id: u64, channel: u32) {
-        let Some(path) = rfd::FileDialog::new().set_title("Replace Material Map Content").pick_file() else { return };
+        if cfg!(target_os = "linux") {
+            self.map_target = Some((id, channel));
+            self.map_dialog = Some(crate::file_chooser::open(
+                "Replace Material Map Content",
+                &["png", "jpg", "jpeg", "webp", "gif", "bmp", "tif", "tiff"],
+            ));
+        } else if let Some(path) = rfd::FileDialog::new().set_title("Replace Material Map Content").pick_file() {
+            self.replace_map_path(session, colours, id, channel, &path);
+        }
+    }
+
+    fn replace_map_path(
+        &mut self,
+        session: &CanvasSession,
+        colours: &mut Colours,
+        id: u64,
+        channel: u32,
+        path: &std::path::Path,
+    ) {
         let Ok(picture) = image::open(&path) else {
             self.notice = Some(("This picture can't be opened.".to_owned(), true));
             return;

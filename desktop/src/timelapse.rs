@@ -796,6 +796,19 @@ fn on_white(frame: &sumi_core::ThumbnailImage, w: u32, h: u32) -> Vec<u8> {
 /// The video made copied where the person picks.
 fn save_as(made: &std::path::Path) {
     let name = made.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    if cfg!(target_os = "linux") {
+        let made = crate::video::OwnedExport(made.to_path_buf());
+        crate::file_chooser::save_with_result("Export time-lapse video", "mp4", &name, move |selected| {
+            if let Some(to) = selected {
+                crate::files::write_meanwhile(false, move || {
+                    if let Err(e) = save_to(&made.0, &to) {
+                        crate::files::tell_later("Can't export", &e.to_string());
+                    }
+                });
+            }
+        });
+        return;
+    }
     let Some(to) = rfd::FileDialog::new()
         .set_title("Export time-lapse video")
         .set_file_name(name)
@@ -970,18 +983,28 @@ impl TimeLapsePlayer {
         self.stepped = Instant::now();
     }
 
-    /// Playback never outruns the reader: speed skips frames, not decoding on the UI thread.
+    /// Wall-clock playback at the recording's 30 fps, even when a UI repaint is late.
+    /// Speed skips frames instead of decoding on the UI thread. If a frame is still
+    /// being read, keep the elapsed time as debt and catch up once it is available.
     fn advance(&mut self, ready: bool, elapsed: Duration) {
         if !self.playing || !ready || self.scrub.is_some() || self.timeline_scrubbing {
             return;
         }
         let step = Duration::from_secs_f64(1.0 / f64::from(TIME_LAPSE_FPS));
-        if elapsed >= step {
-            self.index = self.index.saturating_add(self.speed).min(self.count.saturating_sub(1));
-            self.stepped = Instant::now();
-            if self.index + 1 >= self.count {
-                self.playing = false;
-            }
+        let ticks = elapsed.as_nanos() / step.as_nanos();
+        if ticks == 0 {
+            return;
+        }
+        let frames = ticks.saturating_mul(u128::from(self.speed));
+        let last = self.count.saturating_sub(1);
+        self.index = (u128::from(self.index).saturating_add(frames)).min(u128::from(last)) as u32;
+        // Preserve the fractional frame period rather than resetting to `now`:
+        // resetting made 1x systematically slower whenever a repaint was late.
+        let remainder = Duration::from_nanos((elapsed.as_nanos() % step.as_nanos()) as u64);
+        let now = Instant::now();
+        self.stepped = now.checked_sub(remainder).unwrap_or(now);
+        if self.index >= last {
+            self.playing = false;
         }
     }
 
@@ -1347,20 +1370,55 @@ mod tests {
         player.playing = true;
         player.speed = 16;
         player.advance(true, Duration::from_secs(1));
-        assert_eq!(player.index, 16);
+        assert_eq!(player.index, TIME_LAPSE_FPS * 16, "16x advances sixteen seconds of frames per real second");
         player.toggle_playback();
         assert!(!player.playing);
         player.advance(true, Duration::from_secs(10));
-        assert_eq!(player.index, 16, "pause must not advance even at 16x");
+        assert_eq!(player.index, TIME_LAPSE_FPS * 16, "pause must not advance even at 16x");
         player.jump_seconds(-5);
-        assert_eq!(player.index, 0);
+        assert_eq!(player.index, TIME_LAPSE_FPS * 11);
         player.jump_seconds(5);
-        assert_eq!(player.index, TIME_LAPSE_FPS * 5);
+        assert_eq!(player.index, TIME_LAPSE_FPS * 16);
         player.seek(u32::MAX);
         assert_eq!(player.index, player.count - 1);
         player.toggle_playback();
         assert_eq!(player.index, 0, "play from the last frame restarts");
         assert!(player.playing);
+    }
+
+    #[test]
+    fn playback_one_x_uses_elapsed_wall_time_and_keeps_fractional_frame_period() {
+        let mut player = TimeLapsePlayer::new(None);
+        player.count = 900;
+        player.playing = true;
+        let tick = Duration::from_secs_f64(1.0 / f64::from(TIME_LAPSE_FPS));
+
+        player.advance(true, tick / 2);
+        assert_eq!(player.index, 0);
+        player.advance(true, Duration::from_secs(1));
+        assert_eq!(player.index, TIME_LAPSE_FPS, "1x advances 30 recorded frames in one elapsed second");
+
+        player.advance(true, tick + tick / 2);
+        assert_eq!(player.index, TIME_LAPSE_FPS + 1);
+        assert!(player.stepped.elapsed() >= tick / 2, "late repaint retains the fractional tick");
+
+        player.advance(false, Duration::from_secs(2));
+        assert_eq!(player.index, TIME_LAPSE_FPS + 1, "never outrun the unread frame");
+        player.advance(true, Duration::from_secs(2));
+        assert_eq!(player.index, TIME_LAPSE_FPS * 3 + 1, "recover elapsed time after decoding resumes");
+    }
+
+    #[test]
+    fn playback_speed_and_last_frame_are_correct_after_a_delayed_repaint() {
+        let mut player = TimeLapsePlayer::new(None);
+        player.count = 101;
+        player.playing = true;
+        player.speed = 4;
+        player.advance(true, Duration::from_millis(250));
+        assert_eq!(player.index, 28, "a 250 ms repaint spans seven complete ticks at 4x");
+        player.advance(true, Duration::from_secs(1));
+        assert_eq!(player.index, 100);
+        assert!(!player.playing, "stop on the last frame without overflowing its index");
     }
 
     #[test]

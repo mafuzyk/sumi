@@ -193,6 +193,7 @@ struct Geometry {
 pub struct TextEditor {
     /// The text being edited, as it stands; none when no text is.
     info: Option<TextInfo>,
+    font_dialog: Option<crate::file_chooser::Response>,
     /// What the field holds, and the letters chosen in it (characters, first to last).
     typed: String,
     chosen: (usize, usize),
@@ -357,6 +358,7 @@ impl TextEditor {
 
     /// Ends editing text: `keep` makes it one undo step, otherwise it goes back.
     pub fn end(&mut self, session: &CanvasSession, keep: bool) {
+        self.font_dialog = None;
         if self.info.take().is_none() {
             return;
         }
@@ -404,6 +406,9 @@ impl TextEditor {
         }
         if self.info.is_none() {
             return said;
+        }
+        if let Some(paths) = crate::file_chooser::poll(&mut self.font_dialog) {
+            said = self.import_font_paths(session, paths);
         }
         // undo and redo are the app's, not the field's: undoing undoes the whole edit (with Shift
         // first: the shortcut without it would take it too)
@@ -728,7 +733,11 @@ impl TextEditor {
         painter.set(behind, Shape::rect_filled(import.union(cancel), 21.5, argb(SHEET_CAPSULE)));
         let mut said = None;
         if tapped(ui, import, "import") {
-            said = self.import_font(session);
+            if cfg!(target_os = "linux") {
+                self.font_dialog = Some(crate::file_chooser::open_many("Import fonts", &["ttf", "otf", "ttc", "otc"]));
+            } else {
+                said = self.import_font(session);
+            }
         }
         if tapped(ui, cancel, "cancel") {
             // the text, where it is and its width stay
@@ -1152,13 +1161,19 @@ impl TextEditor {
     fn import_font(&mut self, session: &CanvasSession) -> Option<Said> {
         let endings = ["ttf", "otf", "ttc", "otc", "TTF", "OTF", "TTC", "OTC"];
         let picked = rfd::FileDialog::new().set_title("Import fonts").add_filter("Fonts", &endings).pick_files()?;
+        self.import_font_paths(session, picked)
+    }
+
+    fn import_font_paths(&mut self, session: &CanvasSession, picked: Vec<std::path::PathBuf>) -> Option<Said> {
         fonts_ready();
         // kept in the fonts folder by the core (a file that isn't a font is dropped)
         let mut kept = picked.iter().filter_map(|from| {
             let name = from.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
             sumi_core::import_text_font(std::fs::read(from).ok()?, name)
         });
-        let first = kept.next()?;
+        let Some(first) = kept.next() else {
+            return Some(Said::Notice("No usable font in the selected files", true));
+        };
         let more = kept.count() > 0;
         self.change(session, |t| t.font = first.family);
         Some(Said::Notice(if more { "Fonts imported" } else { "Font imported" }, false))

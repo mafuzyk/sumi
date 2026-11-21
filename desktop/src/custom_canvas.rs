@@ -85,6 +85,7 @@ pub struct CustomCanvas {
     quality: u32,
     hevc: bool,
     profile: String,
+    profile_dialog: Option<crate::file_chooser::Response>,
     /// Which profiles the list shows.
     cmyk: bool,
     /// The background's colour being picked.
@@ -130,6 +131,7 @@ impl CustomCanvas {
             hevc: p.time_lapse_hevc,
             cmyk: is_cmyk_profile(p.profile.clone()),
             profile: p.profile,
+            profile_dialog: None,
             picking: None,
         }
     }
@@ -212,6 +214,13 @@ impl CustomCanvas {
         palettes: &Palettes,
         harmony: HarmonyKind,
     ) -> Option<Done> {
+        if let Some(paths) = crate::file_chooser::poll(&mut self.profile_dialog)
+            && let Some(path) = paths.first()
+            && let Some(name) = crate::files::import_profile_path(path)
+        {
+            self.cmyk = is_cmyk_profile(name.clone());
+            self.profile = name;
+        }
         let screen = ctx.content_rect();
         let wide = screen.width() > screen.height();
         let mut done = None;
@@ -280,7 +289,9 @@ impl CustomCanvas {
             match capsule_words(ui, tick.left() - 13.0, screen.top() + 21.0, words, CAPSULE_INK) {
                 Some("Cancel") => done = Some(Done::Cancel),
                 Some(_) => {
-                    if let Some(name) = crate::files::import_profile() {
+                    if cfg!(target_os = "linux") {
+                        self.profile_dialog = Some(crate::file_chooser::open("Import color profile", &["icc", "icm"]));
+                    } else if let Some(name) = crate::files::import_profile() {
                         self.cmyk = is_cmyk_profile(name.clone());
                         self.profile = name;
                     }

@@ -503,6 +503,7 @@ fn choices_height(n: usize, chosen: usize) -> f32 {
 
 #[derive(Default)]
 pub struct Actions {
+    sound_file: Option<(String, crate::file_chooser::Response)>,
     /// The tab open (kept between runs in the settings).
     tab: Option<usize>,
     /// The tab whose rows show, and since when they change: the old rows fade out, then the new
@@ -563,6 +564,40 @@ impl Swipe {
 }
 
 impl Actions {
+    /// Complete a plugin sound import even after the Actions sheet was dismissed.
+    pub fn poll_sound_file(&mut self, plugins: &sumi_core::Plugins) -> bool {
+        let Some((key, rx)) = self.sound_file.as_mut() else { return false };
+        let mut selected = None;
+        let pending = match rx.try_recv() {
+            Ok(paths) => {
+                selected = paths;
+                false
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => true,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => false,
+        };
+        if pending {
+            return false;
+        }
+        let key = key.clone();
+        self.sound_file = None;
+        let Some(path) = selected.and_then(|paths| paths.into_iter().next()) else { return false };
+        let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        match std::fs::read(&path) {
+            Ok(bytes) => {
+                if plugins.set_sound_file(key, name, bytes) {
+                    true
+                } else {
+                    crate::files::tell_later("Can't import sound", "The plugin needs a usable WAV file.");
+                    false
+                }
+            }
+            Err(e) => {
+                crate::files::tell_later("Can't import sound", &e.to_string());
+                false
+            }
+        }
+    }
     /// The key of the plugin action last tapped, once ([`Act::PluginAction`]).
     pub fn take_plugin_action(&mut self) -> Option<String> {
         self.plugin_action.take()
@@ -956,8 +991,15 @@ impl Actions {
                         if g > 0 {
                             ui.add_space(GROUP_GAP);
                         }
-                        changed |=
-                            plugin_card(ui, plugin, g, &prefs.plugins, &mut self.plugin_moved, &mut self.plugin_action);
+                        changed |= plugin_card(
+                            ui,
+                            plugin,
+                            g,
+                            &prefs.plugins,
+                            &mut self.plugin_moved,
+                            &mut self.plugin_action,
+                            &mut self.sound_file,
+                        );
                     }
                     ui.add_space(13.0);
                 });
@@ -1124,6 +1166,7 @@ fn plugin_card(
     plugins: &Plugins,
     moved: &mut Option<(String, f32)>,
     action: &mut Option<String>,
+    sound_file: &mut Option<(String, crate::file_chooser::Response)>,
 ) -> bool {
     let width = ui.available_width();
     let (area, _) = ui.allocate_exact_size(vec2(width, plugin_height(ui.painter(), plugin, width)), Sense::hover());
@@ -1202,6 +1245,9 @@ fn plugin_card(
                         clear.zip(response.interact_pointer_pos()).is_some_and(|(c, at)| c.expand(8.0).contains(at));
                     if on_clear {
                         changed |= plugins.clear_file(control.key.clone());
+                    } else if cfg!(target_os = "linux") {
+                        *sound_file =
+                            Some((control.key.clone(), crate::file_chooser::open(&control.label, &["wav", "wave"])));
                     } else if let Some((bytes, name)) = crate::files::pick_sound(&control.label) {
                         if plugins.set_sound_file(control.key.clone(), name, bytes) {
                             changed = true;
@@ -2119,7 +2165,7 @@ mod tests {
                 ..RawInput::default()
             };
             let mut output = ctx.clone().run_ui(raw, |ui| {
-                assert!(!plugin_card(ui, &stranger, 0, &plugins, moved, &mut None));
+                assert!(!plugin_card(ui, &stranger, 0, &plugins, moved, &mut None, &mut None));
             });
             output.textures_delta.clear();
         };

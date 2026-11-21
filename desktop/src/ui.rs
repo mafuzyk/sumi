@@ -261,6 +261,7 @@ pub struct Interface {
     /// A plugin file's one screen, and the file while it asks.
     plugin_alert: Alert,
     plugin_file: Option<Vec<u8>>,
+    plugin_picker: Option<crate::file_chooser::Response>,
     /// Non-fatal import/export change notes shown inside the window.
     note_alert: Alert,
     /// An export under way, as its card shows it.
@@ -373,6 +374,7 @@ impl Default for Interface {
             pdf_for: None,
             plugin_alert: Alert::default(),
             plugin_file: None,
+            plugin_picker: None,
             note_alert: Alert::default(),
             export_card: crate::export_card::ExportCard::default(),
             keep_brushes: false,
@@ -625,6 +627,15 @@ impl Interface {
         self.canvas_pressed = std::mem::take(&mut input.canvas_pressed);
         // looked at again soon while an insert is read, or brushes made
         let brushes_coming = self.brushes_added(session);
+        self.colours.poll_palette_file();
+        if let Some(paths) = crate::file_chooser::poll(&mut self.plugin_picker)
+            && let Some(path) = paths.first()
+        {
+            self.offer_plugin_file(path);
+        }
+        if self.actions_panel.poll_sound_file(&self.prefs.plugins) {
+            self.prefs.keep();
+        }
         // the autosave told of when it fails (once until a save works again), the palettes too
         if let Some(why) = session.take_save_failure() {
             self.overlays.notice(sumi_core::save_failure_said(why), true);
@@ -2853,7 +2864,12 @@ impl Interface {
                     self.actions_panel.show(ctx, &mut self.look, button, &showing, &mut self.prefs, backdrops);
                 match act {
                     Some(Act::ImportPlugin) => {
-                        if let Some(path) = crate::files::pick_plugin() {
+                        if cfg!(target_os = "linux") {
+                            self.plugin_picker = Some(crate::file_chooser::open(
+                                "Import Sumi plugin",
+                                &["sumi-plugin", "procraft-plugin", "procraftplugin"],
+                            ));
+                        } else if let Some(path) = crate::files::pick_plugin() {
                             self.offer_plugin_file(&path);
                         }
                     }
@@ -3208,6 +3224,9 @@ const KEY_ZOOM: f32 = 1.25;
 /// closes with it and marks it taken, so one press closes one thing, and the canvas does not also
 /// turn upright ([`Interface::show`]).
 pub fn escape(ctx: &egui::Context) -> bool {
+    if crate::file_chooser::busy() {
+        return false;
+    }
     if !ctx.input(|i| i.key_pressed(Key::Escape)) {
         return false;
     }
@@ -3224,6 +3243,9 @@ pub fn escape(ctx: &egui::Context) -> bool {
 
 /// Escape was pressed this frame, and nothing open took it.
 fn escape_untaken(ctx: &egui::Context) -> bool {
+    if crate::file_chooser::busy() {
+        return false;
+    }
     ctx.input(|i| i.key_pressed(Key::Escape))
         && ctx.data(|d| d.get_temp::<u64>(escape_id())) != Some(ctx.cumulative_pass_nr())
 }

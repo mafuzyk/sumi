@@ -81,6 +81,7 @@ pub struct SourceEditor {
     /// Import's menu (the frame it opened in), and the source library, while they show.
     importing: Option<u64>,
     library: Option<Library>,
+    picture_dialog: Option<crate::file_chooser::Response>,
     /// Auto repeat, and its settings.
     repeating: bool,
     scale: f32,
@@ -106,6 +107,7 @@ impl SourceEditor {
             shipped: None,
             importing: None,
             library: None,
+            picture_dialog: None,
             repeating: false,
             scale: 0.0,
             rotate: 0.0,
@@ -176,13 +178,18 @@ impl SourceEditor {
     /// Shows the editor over the studio (`wide`: beside the pages' card). Some once it closes:
     /// whether the brush changed.
     pub fn show(&mut self, ctx: &egui::Context, look: &mut Look, session: &CanvasSession, wide: bool) -> Option<bool> {
+        if let Some(paths) = crate::file_chooser::poll(&mut self.picture_dialog)
+            && let Some(path) = paths.first()
+        {
+            self.take(picture_from_path(path));
+        }
         if self.stale {
             self.stale = false;
             self.shown = picture(ctx, &self.preview(), self.kind == SourceKind::Shape, self.repeating);
         }
         // Escape closes what is open over the editor, else the editor (as Cancel)
         let escape = crate::ui::escape(ctx) && ctx.memory(|m| m.focused().is_none());
-        if escape && self.importing.take().is_none() && self.library.take().is_none() {
+        if escape && !crate::file_chooser::busy() && self.importing.take().is_none() && self.library.take().is_none() {
             return Some(false);
         }
         let screen = ctx.content_rect();
@@ -425,8 +432,12 @@ impl SourceEditor {
         self.importing = None;
         match k {
             0 | 1 => {
-                let picked = picked_picture(if k == 0 { "Import a photo" } else { "Import a file" });
-                self.take(picked);
+                let title = if k == 0 { "Import a photo" } else { "Import a file" };
+                if cfg!(target_os = "linux") {
+                    self.picture_dialog = Some(crate::file_chooser::open(title, PICTURES));
+                } else {
+                    self.take(picked_picture(title));
+                }
             }
             2 => self.library = Some(Library::new(ui.ctx(), self.grain())),
             _ => self.take(pasted()),
@@ -625,6 +636,10 @@ fn search_field(ui: &mut Ui, field: Rect, query: &mut String) {
 /// A picture the user picks, as a source image; none if they pick none or it can't be read.
 fn picked_picture(title: &str) -> Option<Vec<u8>> {
     let path = rfd::FileDialog::new().set_title(title).add_filter("Pictures", PICTURES).pick_file()?;
+    picture_from_path(&path)
+}
+
+fn picture_from_path(path: &std::path::Path) -> Option<Vec<u8>> {
     let picture = std::fs::read(&path).ok().and_then(|bytes| image::load_from_memory(&bytes).ok());
     let Some(picture) = picture else {
         crate::files::tell("Can't import it", "This picture can't be opened.");

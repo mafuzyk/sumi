@@ -65,6 +65,8 @@ pub struct CanvasInfo {
     photo: Option<TextureHandle>,
     photo_read: bool,
     new_photo: Option<image::RgbaImage>,
+    photo_dialog: Option<crate::file_chooser::Response>,
+    profile_dialog: Option<crate::file_chooser::Response>,
     /// The profile picked to change to.
     profile: String,
     /// The signature's strokes, x, y of each point across its box (0..1).
@@ -97,6 +99,8 @@ impl CanvasInfo {
             photo: None,
             photo_read: false,
             new_photo: None,
+            photo_dialog: None,
+            profile_dialog: None,
             profile: session.profile(),
             lapse,
             video: sumi_core::time_lapse_setting_names(video),
@@ -138,6 +142,18 @@ impl CanvasInfo {
 
     /// Shows it over the whole window; returns how it ended, once it has.
     pub fn show(&mut self, ctx: &egui::Context, look: &mut Look, session: &CanvasSession) -> Option<Ended> {
+        if let Some(paths) = crate::file_chooser::poll(&mut self.photo_dialog)
+            && let Some(path) = paths.first()
+        {
+            self.use_photo(ctx, path);
+        }
+        if let Some(paths) = crate::file_chooser::poll(&mut self.profile_dialog)
+            && let Some(path) = paths.first()
+            && let Some(name) = crate::files::import_profile_path(path)
+            && is_cmyk_profile(name.clone()) == session.is_cmyk()
+        {
+            self.profile = name;
+        }
         if !self.photo_read {
             self.photo_read = true;
             let file = self.dir.as_ref().map(|d| Path::new(d).join("about").join("photo.jpg"));
@@ -233,7 +249,9 @@ impl CanvasInfo {
                 Some("Cancel") => ended = Some(Ended::Cancel),
                 // a profile of the canvas's kind is picked to change to
                 Some(_) => {
-                    if let Some(name) =
+                    if cfg!(target_os = "linux") {
+                        self.profile_dialog = Some(crate::file_chooser::open("Import color profile", &["icc", "icm"]));
+                    } else if let Some(name) =
                         crate::files::import_profile().filter(|n| is_cmyk_profile(n.clone()) == session.is_cmyk())
                     {
                         self.profile = name;
@@ -427,6 +445,17 @@ impl CanvasInfo {
         }
     }
 
+    fn use_photo(&mut self, ctx: &egui::Context, path: &std::path::Path) {
+        match image::open(path) {
+            Ok(picture) => {
+                let rgba = picture.to_rgba8();
+                self.photo = Some(photo_texture(ctx, &rgba));
+                self.new_photo = Some(rgba);
+            }
+            Err(e) => log::warn!("opening author's photo {}: {e}", path.display()),
+        }
+    }
+
     /// The author: a photo (a tap picks another), "Made by" and the name, and a signature drawn
     /// over a dashed line.
     fn about_card(&mut self, ui: &mut Ui, look: &mut Look, width: f32) {
@@ -444,16 +473,17 @@ impl CanvasInfo {
             }
             None => look.icon(ui, &icons::PERSON, photo.center(), 48.0, argb(PHOTO_GLYPH)),
         }
-        if ui.interact(photo, ui.scope_id().with("photo"), Sense::click()).clicked()
-            && let Some(path) = rfd::FileDialog::new()
+        if ui.interact(photo, ui.scope_id().with("photo"), Sense::click()).clicked() {
+            if cfg!(target_os = "linux") {
+                self.photo_dialog =
+                    Some(crate::file_chooser::open("Photo", &["png", "jpg", "jpeg", "webp", "gif", "bmp"]));
+            } else if let Some(path) = rfd::FileDialog::new()
                 .set_title("Photo")
                 .add_filter("Pictures", &["png", "jpg", "jpeg", "webp", "gif", "bmp"])
                 .pick_file()
-            && let Ok(picture) = image::open(path)
-        {
-            let rgba = picture.to_rgba8();
-            self.photo = Some(photo_texture(ui.ctx(), &rgba));
-            self.new_photo = Some(rgba);
+            {
+                self.use_photo(ui.ctx(), &path);
+            }
         }
         // "Made by" and the name, centred together
         let field_width =

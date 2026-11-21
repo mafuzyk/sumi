@@ -70,7 +70,7 @@ impl Format {
         matches!(self, Format::Sumi | Format::Package | Format::ModelArtwork)
     }
 
-    fn extension(self) -> &'static str {
+    pub(crate) fn extension(self) -> &'static str {
         match self {
             Format::Sumi | Format::ModelArtwork => "sumi",
             Format::Package => "procreate",
@@ -201,6 +201,10 @@ fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
 
 /// Shows a passing message with an OK button.
 pub fn say(text: &str) {
+    if cfg!(target_os = "linux") {
+        note_later("Sumi", text);
+        return;
+    }
     MessageDialog::new().set_level(MessageLevel::Info).set_title("Sumi").set_description(text).show();
 }
 
@@ -264,39 +268,18 @@ pub fn take_pending_brushes() -> Vec<(Vec<u8>, String)> {
 pub fn tell(title: &str, text: &str) {
     log::error!("{title}: {text}");
     eprintln!("{title}: {text}");
-    if cfg!(target_os = "linux") && !has_program("zenity") {
-        // what shows the app's dialogs on Linux isn't there: the first that is of the others
-        let shown = other_dialogs(title, text).iter().any(|(program, args)| {
-            std::process::Command::new(program).args(args).status().is_ok_and(|done| done.success())
-        });
-        if shown {
-            return;
-        }
+    if cfg!(target_os = "linux") {
+        // The external RFD portal/Zenity fallback can block the UI for minutes
+        // when D-Bus has no FileChooser provider. Use the existing egui notice.
+        note_later(title, text);
+        return;
     }
     MessageDialog::new().set_level(MessageLevel::Error).set_title(title).set_description(text).show();
 }
 
-/// Whether `program` can be run here. Asked of the same program on every error dialog otherwise,
-/// so the answer is kept for the life of the process (what is installed does not change meantime).
-fn has_program(program: &str) -> bool {
-    static FOUND: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, bool>>> =
-        std::sync::OnceLock::new();
-    let found = FOUND.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
-    if let Some(&known) = found.lock().unwrap_or_else(|e| e.into_inner()).get(program) {
-        return known;
-    }
-    let can_run = std::process::Command::new(program)
-        .arg("--version")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .is_ok();
-    _ = found.lock().unwrap_or_else(|e| e.into_inner()).insert(program.to_owned(), can_run);
-    can_run
-}
-
 /// The programs that can show a message where the app's own dialogs can't, in the order to try
 /// them, each with its arguments.
+#[cfg(test)]
 fn other_dialogs(title: &str, text: &str) -> [(&'static str, Vec<String>); 3] {
     let (title, text) = (title.to_owned(), text.to_owned());
     [
@@ -406,6 +389,22 @@ pub fn tell_what_was_told() {
 pub fn save_file(bytes: &[u8], name: &str, extension: &str, kind: &str) {
     let safe: String = name.chars().map(|c| if c.is_alphanumeric() || " _-".contains(c) { c } else { '_' }).collect();
     let safe = if safe.trim().is_empty() { "Brush".to_owned() } else { safe };
+    if cfg!(target_os = "linux") {
+        let bytes = bytes.to_vec();
+        crate::file_chooser::save_with(
+            &format!("Share {kind}"),
+            extension,
+            &format!("{safe}.{extension}"),
+            move |path| {
+                write_meanwhile(false, move || {
+                    if let Err(e) = write_whole(&path, &bytes) {
+                        tell_later("Can't share", &e.to_string());
+                    }
+                });
+            },
+        );
+        return;
+    }
     let Some(path) = FileDialog::new()
         .set_title(format!("Share {kind}"))
         .add_filter(kind, &[extension])
@@ -561,6 +560,11 @@ pub fn keep_preset_time_lapse(preset: &CanvasPreset, dir: &str) {
 /// none (said so) if it isn't one.
 pub fn import_profile() -> Option<String> {
     let path = FileDialog::new().set_title("Import").add_filter("Color profiles", &["icc", "icm"]).pick_file()?;
+    import_profile_path(&path)
+}
+
+/// Imports a profile selected by either the native dialog or the Linux in-window chooser.
+pub fn import_profile_path(path: &Path) -> Option<String> {
     let name = std::fs::read(path).ok().and_then(sumi_core::import_profile);
     if name.is_none() {
         tell("Can't import", "This file isn't a color profile.");
@@ -866,6 +870,10 @@ fn about_description() -> String {
 
 /// Shows the app's name, version and attribution.
 pub fn about() {
+    if cfg!(target_os = "linux") {
+        note_later(about_title(), &about_description());
+        return;
+    }
     MessageDialog::new()
         .set_level(MessageLevel::Info)
         .set_title(about_title())
@@ -891,6 +899,12 @@ pub fn save(session: &Arc<CanvasSession>, ui: &mut Interface, ask: bool) {
             with_extension(p, "sumi")
         }
     };
+    save_at(session, ui, path);
+}
+
+/// The actual save after a destination was selected (native or in-window).
+pub fn save_at(session: &Arc<CanvasSession>, ui: &mut Interface, path: PathBuf) {
+    let path = with_extension(path, "sumi");
     let edits = session.edits();
     let time_lapse = ui.artwork_dir.as_deref().map(crate::timelapse::for_package);
     let (session, (done, saved)) = (Arc::clone(session), std::sync::mpsc::channel());
@@ -918,7 +932,34 @@ pub fn export(
         let title =
             if format == Format::ModelTextures { "Share textures as PNG files" } else { "Share layers as PNG files" };
         let Some(dir) = FileDialog::new().set_title(title).pick_folder() else { return };
-        let dir = dir.to_string_lossy().into_owned();
+        export_to(session, format, &dir, "", pdf_quality, card);
+        return;
+    }
+    let Some(path) = FileDialog::new()
+        .set_title(format!("Export {}", format.name()))
+        .add_filter(format.name(), &[format.extension()])
+        .set_file_name(format!("{}.{}", export_file_name(session.name(), format.package()), format.extension()))
+        .save_file()
+    else {
+        return;
+    };
+    export_to(session, format, &path, dir.unwrap_or(""), pdf_quality, card);
+}
+
+/// Starts an export after the destination was selected; does not display a native dialog.
+pub fn export_to(
+    session: &Arc<CanvasSession>,
+    format: Format,
+    destination: &Path,
+    dir: &str,
+    pdf_quality: u8,
+    card: &mut crate::export_card::ExportCard,
+) {
+    if card.busy() {
+        return;
+    }
+    if matches!(format, Format::LayerPngs | Format::ChosenLayerPngs | Format::ModelTextures) {
+        let dir = destination.to_string_lossy().into_owned();
         writing(session, card, "Can't share", move |session| {
             // every picture goes into a folder of the export's own first: cancelling takes only
             // that, and a file already in the picked folder is never written over
@@ -934,17 +975,9 @@ pub fn export(
         });
         return;
     }
-    let Some(path) = FileDialog::new()
-        .set_title(format!("Export {}", format.name()))
-        .add_filter(format.name(), &[format.extension()])
-        .set_file_name(format!("{}.{}", export_file_name(session.name(), format.package()), format.extension()))
-        .save_file()
-    else {
-        return;
-    };
-    let path = with_extension(path, format.extension());
-    let artwork = dir.map(str::to_owned);
-    let time_lapse = dir.map(crate::timelapse::for_package);
+    let path = with_extension(destination.to_path_buf(), format.extension());
+    let artwork = (!dir.is_empty()).then(|| dir.to_owned());
+    let time_lapse = (!dir.is_empty()).then(|| crate::timelapse::for_package(dir));
     writing(session, card, "Can't export", move |session| {
         // a file of the export's own beside the target first, so a cancelled export leaves what
         // was there as it was and never takes a `.part` another one left
@@ -990,7 +1023,20 @@ pub fn export_plugin(session: &Arc<CanvasSession>, key: &str, card: &mut crate::
     else {
         return;
     };
-    let path = with_extension(path, &extension);
+    export_plugin_to(session, key, &path, card);
+}
+
+pub fn export_plugin_to(
+    session: &Arc<CanvasSession>,
+    key: &str,
+    destination: &Path,
+    card: &mut crate::export_card::ExportCard,
+) {
+    if card.busy() {
+        return;
+    }
+    let Some(export) = session.plugin_exports().into_iter().find(|e| e.key == key) else { return };
+    let path = with_extension(destination.to_path_buf(), &export.extension);
     let key = key.to_owned();
     writing(session, card, "Can't export", move |session| {
         // a file of the export's own beside the target first, as `export` writes it
@@ -998,6 +1044,10 @@ pub fn export_plugin(session: &Arc<CanvasSession>, key: &str, card: &mut crate::
         session.export_plugin(key, staging.path.to_string_lossy().into_owned()).map_err(|e| e.to_string())?;
         Ok((Delivery::File(staging), Vec::new()))
     });
+}
+
+pub fn export_suggested_name(name: String, format: Format) -> String {
+    format!("{}.{}", export_file_name(name, format.package()), format.extension())
 }
 
 /// Writes an export on a thread of its own (a large one takes seconds, the window drawing on
@@ -1230,6 +1280,46 @@ pub fn share_artworks(
             })
             .collect()
     };
+    share_artworks_targets(targets, format, pdf_quality, card);
+}
+
+/// Shares already-selected artworks after a native or in-window destination chooser.
+pub fn share_artworks_to(
+    list: &[sumi_core::GalleryArtwork],
+    format: Format,
+    pdf_quality: u8,
+    card: &mut crate::export_card::ExportCard,
+    destination: PathBuf,
+) {
+    if card.busy() || list.is_empty() {
+        return;
+    }
+    let extension = format.extension();
+    let targets: Vec<(sumi_core::GalleryArtwork, PathBuf)> = if let [one] = list {
+        vec![(one.clone(), with_extension(destination, extension))]
+    } else {
+        let mut used = std::collections::HashSet::new();
+        list.iter()
+            .map(|a| {
+                let base = export_file_name(a.name.clone(), false);
+                let (mut name, mut n) = (base.clone(), 2);
+                while !used.insert(name.clone()) {
+                    name = format!("{base} {n}");
+                    n += 1;
+                }
+                (a.clone(), destination.join(format!("{name}.{extension}")))
+            })
+            .collect()
+    };
+    share_artworks_targets(targets, format, pdf_quality, card);
+}
+
+fn share_artworks_targets(
+    targets: Vec<(sumi_core::GalleryArtwork, PathBuf)>,
+    format: Format,
+    pdf_quality: u8,
+    card: &mut crate::export_card::ExportCard,
+) {
     // written on a thread of their own (each opened on a device of its own takes seconds), the
     // window drawing on meanwhile; each beside where it goes until all are made
     let done = Arc::new(std::sync::atomic::AtomicU32::new(0));

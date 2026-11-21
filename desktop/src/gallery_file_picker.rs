@@ -17,6 +17,22 @@ pub enum Kind {
     Reference,
     Insert,
     InsertPhoto,
+    Custom,
+}
+
+/// A generic in-window Linux chooser for paths outside the Start Deck.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Selection {
+    OpenOne,
+    OpenMany,
+    Save,
+    Folder,
+}
+
+struct Custom {
+    title: String,
+    selection: Selection,
+    extensions: Vec<String>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -40,6 +56,8 @@ pub struct Picker {
     selected: BTreeSet<PathBuf>,
     filter: String,
     problem: Option<String>,
+    custom: Option<Custom>,
+    replace: Option<PathBuf>,
 }
 
 impl Picker {
@@ -57,9 +75,26 @@ impl Picker {
             selected: BTreeSet::new(),
             filter: String::new(),
             problem: None,
+            custom: None,
+            replace: None,
         };
         picker.refresh();
         picker
+    }
+
+    pub fn custom(title: String, selection: Selection, extensions: Vec<String>, suggested: Option<String>) -> Self {
+        let mut picker = Self::new(Kind::Custom);
+        picker.custom =
+            Some(Custom { title, selection, extensions: extensions.into_iter().map(|e| e.to_lowercase()).collect() });
+        if let Some(name) = suggested.filter(|s| !s.trim().is_empty()) {
+            picker.location = picker.directory.join(name).to_string_lossy().into_owned();
+        }
+        picker.refresh();
+        picker
+    }
+
+    fn selection(&self) -> Selection {
+        self.custom.as_ref().map_or(Selection::OpenOne, |c| c.selection)
     }
 
     pub fn kind(&self) -> Kind {
@@ -79,7 +114,7 @@ impl Picker {
             let Ok(entry) = entry else { continue };
             let path = entry.path();
             let directory = path.is_dir();
-            if !directory && (!path.is_file() || !self.accepts(&path)) {
+            if !directory && (self.selection() == Selection::Folder || !path.is_file() || !self.accepts(&path)) {
                 continue;
             }
             self.entries.push(Entry { name: entry.file_name().to_string_lossy().into_owned(), path, directory });
@@ -104,6 +139,10 @@ impl Picker {
                             .contains(&ext.to_string_lossy().to_lowercase().as_str())
                     })
             }
+            Kind::Custom => self.custom.as_ref().is_some_and(|c| {
+                c.extensions.is_empty()
+                    || path.extension().is_some_and(|ext| c.extensions.contains(&ext.to_string_lossy().to_lowercase()))
+            }),
         }
     }
 
@@ -112,6 +151,7 @@ impl Picker {
             self.directory = directory;
             self.location = self.directory.to_string_lossy().into_owned();
             self.selected.clear();
+            self.replace = None;
             self.refresh();
         } else {
             self.problem = Some("That directory isn't available.".into());
@@ -120,7 +160,16 @@ impl Picker {
 
     /// Resolve a typed path (relative to the current folder), or the selected files.
     fn choose(&self) -> Result<Vec<PathBuf>, String> {
-        let paths: Vec<_> = if !self.selected.is_empty() {
+        if self.selection() == Selection::Folder {
+            let folder = if self.location.trim().is_empty() {
+                self.directory.clone()
+            } else {
+                let entered = Path::new(self.location.trim());
+                if entered.is_absolute() { entered.to_path_buf() } else { self.directory.join(entered) }
+            };
+            return if folder.is_dir() { Ok(vec![folder]) } else { Err("Select an existing folder.".into()) };
+        }
+        let mut paths: Vec<_> = if !self.selected.is_empty() {
             self.selected.iter().cloned().collect()
         } else {
             let entered = self.location.trim();
@@ -130,7 +179,22 @@ impl Picker {
             let p = Path::new(entered);
             vec![if p.is_absolute() { p.to_path_buf() } else { self.directory.join(p) }]
         };
+        if self.selection() == Selection::Save
+            && let Some(extension) = self.custom.as_ref().and_then(|custom| custom.extensions.first())
+            && let Some(path) = paths.first_mut()
+        {
+            // Match the package writer's `with_extension` before checking overwrite.
+            // Otherwise typing "name.jpg" and saving as Sumi could silently replace
+            // an existing "name.sumi" that the chooser never asked to overwrite.
+            path.set_extension(extension);
+        }
         for path in &paths {
+            if self.selection() == Selection::Save {
+                if !path.parent().is_some_and(Path::is_dir) || path.is_dir() {
+                    return Err(format!("Invalid destination: {}", path.display()));
+                }
+                continue;
+            }
             if !path.is_file() {
                 return Err(format!("Not a file: {}", path.display()));
             }
@@ -144,7 +208,8 @@ impl Picker {
 
     pub fn show(&mut self, ctx: &Context) -> Option<Choice> {
         let mut result = None;
-        let modal = Modal::new(Id::unique("sumi-gallery-file-picker")).show(ctx, |ui| {
+        let id = if self.kind == Kind::Custom { "sumi-generic-file-picker" } else { "sumi-gallery-file-picker" };
+        let modal = Modal::new(Id::unique(id)).show(ctx, |ui| {
             ui.set_min_width(ctx.content_rect().width().min(640.0).max(240.0));
             ui.heading(match self.kind {
                 Kind::Import => "Open or import artwork",
@@ -153,6 +218,7 @@ impl Picker {
                 Kind::Reference => "Import reference image",
                 Kind::Insert => "Insert a picture or video",
                 Kind::InsertPhoto => "Insert a photo",
+                Kind::Custom => self.custom.as_ref().map_or("Choose a file", |c| c.title.as_str()),
             });
             ui.horizontal(|ui| {
                 if ui.button("Up").clicked()
@@ -171,6 +237,7 @@ impl Picker {
                 ui.label("Location");
                 if ui.text_edit_singleline(&mut self.location).changed() {
                     self.selected.clear();
+                    self.replace = None;
                 }
                 if ui.button("Go").clicked() {
                     let path = PathBuf::from(self.location.trim());
@@ -211,7 +278,10 @@ impl Picker {
                     } else {
                         let selected = self.selected.contains(&entry.path);
                         if ui.selectable_label(selected, &entry.name).clicked() {
-                            if !matches!(self.kind, Kind::Import | Kind::Artwork) || !ui.input(|i| i.modifiers.ctrl) {
+                            if !(matches!(self.kind, Kind::Import | Kind::Artwork)
+                                || self.selection() == Selection::OpenMany)
+                                || !ui.input(|i| i.modifiers.ctrl)
+                            {
                                 self.selected.clear();
                             }
                             if !selected {
@@ -221,6 +291,7 @@ impl Picker {
                             }
                             self.location = entry.path.to_string_lossy().into_owned();
                             self.problem = None;
+                            self.replace = None;
                         }
                     }
                 }
@@ -229,12 +300,33 @@ impl Picker {
                 ui.colored_label(egui::Color32::LIGHT_RED, problem);
             }
             ui.separator();
+            if let Some(path) = &self.replace {
+                ui.colored_label(egui::Color32::YELLOW, format!("Replace existing file: {}?", path.display()));
+            }
             ui.horizontal(|ui| {
                 if ui.button("Cancel").clicked() {
                     result = Some(Choice::Cancel);
                 }
-                if ui.button("Open").clicked() {
+                let action = match self.selection() {
+                    Selection::OpenOne | Selection::OpenMany => "Open",
+                    Selection::Save => {
+                        if self.replace.is_some() {
+                            "Replace"
+                        } else {
+                            "Save"
+                        }
+                    }
+                    Selection::Folder => "Choose folder",
+                };
+                if ui.button(action).clicked() {
                     match self.choose() {
+                        Ok(paths)
+                            if self.selection() == Selection::Save
+                                && paths.first().is_some_and(|path| path.exists())
+                                && self.replace.as_ref() != paths.first() =>
+                        {
+                            self.replace = paths.first().cloned();
+                        }
                         Ok(paths) => result = Some(Choice::Files(paths)),
                         Err(error) => self.problem = Some(error),
                     }
@@ -250,7 +342,48 @@ impl Picker {
 
 #[cfg(test)]
 mod tests {
-    use super::{Kind, Picker};
+    use super::{Kind, Picker, Selection};
+
+    #[test]
+    fn generic_picker_opens_real_files_and_folders_without_a_portal() {
+        let dir = std::env::temp_dir().join(format!("sumi-generic-picker-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let png = dir.join("photo.PNG");
+        let txt = dir.join("notes.txt");
+        std::fs::write(&png, b"image content not needed by picker").unwrap();
+        std::fs::write(&txt, b"text").unwrap();
+        let mut open = Picker::custom("Import photo".into(), Selection::OpenOne, vec!["png".into()], None);
+        open.enter(dir.clone());
+        assert!(open.entries.iter().any(|entry| entry.path == png));
+        assert!(!open.entries.iter().any(|entry| entry.path == txt));
+        open.location = png.to_string_lossy().into_owned();
+        assert_eq!(open.choose().unwrap(), vec![png.clone()]);
+        open.location = txt.to_string_lossy().into_owned();
+        assert!(open.choose().is_err(), "typed unsupported extension must be rejected");
+
+        let mut folder = Picker::custom("Export folder".into(), Selection::Folder, vec![], None);
+        folder.enter(dir.clone());
+        assert_eq!(folder.choose().unwrap(), vec![dir.clone()]);
+        folder.location = dir.join("does-not-exist").to_string_lossy().into_owned();
+        assert!(folder.choose().is_err());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn save_picker_normalizes_extension_before_overwrite_confirmation() {
+        let dir = std::env::temp_dir().join(format!("sumi-save-picker-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let existing = dir.join("painting.sumi");
+        std::fs::write(&existing, b"do not overwrite this in a file picker test").unwrap();
+        let mut save = Picker::custom("Save Sumi".into(), Selection::Save, vec!["sumi".into()], None);
+        save.enter(dir.clone());
+        save.location = dir.join("painting.png").to_string_lossy().into_owned();
+        assert_eq!(save.choose().unwrap(), vec![existing.clone()]);
+        assert!(existing.exists(), "selecting a destination does not write it");
+        save.location = dir.join("missing-parent").join("painting.sumi").to_string_lossy().into_owned();
+        assert!(save.choose().is_err(), "an invalid parent must be rejected before export");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn file_picker_selects_an_actual_image_for_import_and_photo() {
