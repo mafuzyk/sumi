@@ -568,9 +568,9 @@ impl AnimatedExport {
                 // Move ownership of the temporary output out of this panel: Drop
                 // normally discards it. The pending chooser must own it until
                 // the file is saved or the user cancels.
-                let (_, path, _) = self.made.take().expect("the rendered video was ready");
-                let made = crate::video::OwnedExport(path);
-                let name = made.0.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                let Some((_, path, _)) = self.made.take() else { return None };
+                let made = crate::video::OwnedExport::new(path);
+                let name = made.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
                 let format = self.format;
                 crate::file_chooser::save_with_result(
                     &format!("Share as {}", format.title()),
@@ -579,8 +579,10 @@ impl AnimatedExport {
                     move |selected| {
                         if let Some(path) = selected {
                             crate::files::write_meanwhile(false, move || {
-                                if let Err(e) = save_made(&made.0, &path) {
-                                    crate::files::tell_later("Can't export", &e.to_string());
+                                let mut made = made;
+                                match save_made(&made.path, &path) {
+                                    Ok(()) => made.keep_if_saved_here(&path),
+                                    Err(e) => crate::files::tell_later("Can't export", &e.to_string()),
                                 }
                             });
                         }
@@ -901,6 +903,20 @@ mod tests {
         save_made(&made, &made).unwrap();
         assert_eq!(std::fs::read(&made).unwrap(), b"made animation", "the made file was emptied");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn saving_owned_animation_to_its_temporary_path_keeps_it_after_drop() {
+        let made = crate::video::export_temp_path("same-path-animation", "gif");
+        std::fs::create_dir_all(made.parent().unwrap()).unwrap();
+        std::fs::write(&made, b"saved GIF").unwrap();
+        {
+            let mut owned = crate::video::OwnedExport::new(made.clone());
+            save_made(&owned.path, &made).unwrap();
+            owned.keep_if_saved_here(&made);
+        }
+        assert_eq!(std::fs::read(&made).unwrap(), b"saved GIF");
+        crate::video::discard(&made);
     }
 
     /// Nothing made to copy: what was at the destination stays, and the delivery leaves no file

@@ -121,7 +121,7 @@ pub fn show(ctx: &Context) {
         let Some(request) = hub.active.as_mut() else { return };
         let choice = request.picker.show(ctx);
         if let Some(choice) = choice {
-            let request = hub.active.take().expect("the chooser was active");
+            let Some(request) = hub.active.take() else { return };
             let paths = match choice {
                 Choice::Cancel => None,
                 Choice::Files(paths) => Some(paths),

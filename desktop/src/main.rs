@@ -731,7 +731,7 @@ impl App {
         if pending.response.is_some() {
             return;
         }
-        let pending = self.destination.take().expect("pending destination exists");
+        let Some(pending) = self.destination.take() else { return };
         let Some(path) = selected.and_then(|paths| paths.into_iter().next()) else { return };
         if let Some(source) = pending.source
             && !self.session.as_ref().is_some_and(|current| Arc::ptr_eq(current, &source))
@@ -1139,7 +1139,9 @@ impl App {
                     if let Some(screen) = &self.screen {
                         screen.window.request_redraw();
                     }
-                } else if let Some(paths) = files::pick_import() {
+                } else if !cfg!(target_os = "linux")
+                    && let Some(paths) = files::pick_import()
+                {
                     self.import(paths, folder);
                 }
             }

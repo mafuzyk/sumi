@@ -52,6 +52,9 @@ pub struct Picker {
     kind: Kind,
     directory: PathBuf,
     location: String,
+    /// The Save dialog edits a filename separately from folder navigation.
+    /// Never infer a filename from a folder path when changing directories.
+    save_name: String,
     entries: Vec<Entry>,
     selected: BTreeSet<PathBuf>,
     filter: String,
@@ -70,6 +73,7 @@ impl Picker {
         let mut picker = Self {
             kind,
             location: directory.to_string_lossy().into_owned(),
+            save_name: String::new(),
             directory,
             entries: Vec::new(),
             selected: BTreeSet::new(),
@@ -87,7 +91,7 @@ impl Picker {
         picker.custom =
             Some(Custom { title, selection, extensions: extensions.into_iter().map(|e| e.to_lowercase()).collect() });
         if let Some(name) = suggested.filter(|s| !s.trim().is_empty()) {
-            picker.location = picker.directory.join(name).to_string_lossy().into_owned();
+            picker.save_name = name;
         }
         picker.refresh();
         picker
@@ -169,7 +173,33 @@ impl Picker {
             };
             return if folder.is_dir() { Ok(vec![folder]) } else { Err("Select an existing folder.".into()) };
         }
-        let mut paths: Vec<_> = if !self.selected.is_empty() {
+        if self.selection() == Selection::Save {
+            let name = self.save_name.trim();
+            if name.is_empty() {
+                return Err("Enter a filename to save.".into());
+            }
+            let folder = Path::new(self.location.trim());
+            let folder = if folder.is_absolute() { folder.to_path_buf() } else { self.directory.join(folder) };
+            if !folder.is_dir() {
+                return Err("Choose an existing destination folder.".into());
+            }
+            let entered = Path::new(name);
+            let mut path = if entered.is_absolute() { entered.to_path_buf() } else { folder.join(entered) };
+            // Reject a folder before changing its extension: otherwise entering
+            // Documents could silently write ../Documents.sumi instead.
+            if path.is_dir() {
+                return Err("Enter a filename, not a directory.".into());
+            }
+            if let Some(extension) = self.custom.as_ref().and_then(|custom| custom.extensions.first()) {
+                // Match the writer's final extension *before* overwrite confirmation.
+                path.set_extension(extension);
+            }
+            if path.is_dir() || !path.parent().is_some_and(Path::is_dir) {
+                return Err(format!("Invalid destination: {}", path.display()));
+            }
+            return Ok(vec![path]);
+        }
+        let paths: Vec<_> = if !self.selected.is_empty() {
             self.selected.iter().cloned().collect()
         } else {
             let entered = self.location.trim();
@@ -179,22 +209,7 @@ impl Picker {
             let p = Path::new(entered);
             vec![if p.is_absolute() { p.to_path_buf() } else { self.directory.join(p) }]
         };
-        if self.selection() == Selection::Save
-            && let Some(extension) = self.custom.as_ref().and_then(|custom| custom.extensions.first())
-            && let Some(path) = paths.first_mut()
-        {
-            // Match the package writer's `with_extension` before checking overwrite.
-            // Otherwise typing "name.jpg" and saving as Sumi could silently replace
-            // an existing "name.sumi" that the chooser never asked to overwrite.
-            path.set_extension(extension);
-        }
         for path in &paths {
-            if self.selection() == Selection::Save {
-                if !path.parent().is_some_and(Path::is_dir) || path.is_dir() {
-                    return Err(format!("Invalid destination: {}", path.display()));
-                }
-                continue;
-            }
             if !path.is_file() {
                 return Err(format!("Not a file: {}", path.display()));
             }
@@ -209,130 +224,148 @@ impl Picker {
     pub fn show(&mut self, ctx: &Context) -> Option<Choice> {
         let mut result = None;
         let id = if self.kind == Kind::Custom { "sumi-generic-file-picker" } else { "sumi-gallery-file-picker" };
-        let modal = Modal::new(Id::unique(id)).show(ctx, |ui| {
-            ui.set_min_width(ctx.content_rect().width().min(640.0).max(240.0));
-            ui.heading(match self.kind {
-                Kind::Import => "Open or import artwork",
-                Kind::Artwork => "Open artwork",
-                Kind::Photo => "Choose a photo",
-                Kind::Reference => "Import reference image",
-                Kind::Insert => "Insert a picture or video",
-                Kind::InsertPhoto => "Insert a photo",
-                Kind::Custom => self.custom.as_ref().map_or("Choose a file", |c| c.title.as_str()),
-            });
-            ui.horizontal(|ui| {
-                if ui.button("Up").clicked()
-                    && let Some(parent) = self.directory.parent()
-                {
-                    self.enter(parent.to_path_buf());
-                }
-                if ui.button("Home").clicked()
-                    && let Some(home) = std::env::var_os("HOME")
-                {
-                    self.enter(PathBuf::from(home));
-                }
-                ui.label(self.directory.display().to_string());
-            });
-            ui.horizontal(|ui| {
-                ui.label("Location");
-                if ui.text_edit_singleline(&mut self.location).changed() {
-                    self.selected.clear();
-                    self.replace = None;
-                }
-                if ui.button("Go").clicked() {
-                    let path = PathBuf::from(self.location.trim());
-                    let path = if path.is_absolute() { path } else { self.directory.join(path) };
-                    if path.is_dir() {
-                        self.enter(path);
-                    } else {
-                        self.problem = Some("Enter a directory or select a file below.".into());
+        let modal = Modal::new(Id::unique(id))
+            // A source editor uses a full-screen interactive area. Keep the
+            // actual dialog above it, not underneath its input-capturing layer.
+            .area(Modal::default_area(Id::unique(id)).order(egui::Order::Tooltip))
+            .show(ctx, |ui| {
+                ui.set_min_width(ctx.content_rect().width().min(640.0).max(240.0));
+                ui.heading(match self.kind {
+                    Kind::Import => "Open or import artwork",
+                    Kind::Artwork => "Open artwork",
+                    Kind::Photo => "Choose a photo",
+                    Kind::Reference => "Import reference image",
+                    Kind::Insert => "Insert a picture or video",
+                    Kind::InsertPhoto => "Insert a photo",
+                    Kind::Custom => self.custom.as_ref().map_or("Choose a file", |c| c.title.as_str()),
+                });
+                ui.horizontal(|ui| {
+                    if ui.button("Up").clicked()
+                        && let Some(parent) = self.directory.parent()
+                    {
+                        self.enter(parent.to_path_buf());
                     }
-                }
-            });
-            ui.separator();
-            ui.horizontal(|ui| {
-                ui.label("Search");
-                ui.text_edit_singleline(&mut self.filter).on_hover_text("Filter filenames in this folder");
-            });
-            ScrollArea::vertical().max_height(320.0).min_scrolled_height(180.0).show(ui, |ui| {
-                ui.set_min_width(ui.available_width());
-                let filter = self.filter.to_lowercase();
-                let matching: Vec<_> = self
-                    .entries
-                    .iter()
-                    .filter(|entry| filter.is_empty() || entry.name.to_lowercase().contains(&filter))
-                    .take(2049)
-                    .cloned()
-                    .collect();
-                let mut visible = 0;
-                for entry in matching {
-                    if visible == 2048 {
-                        ui.label("More files: narrow the Search to find them.");
-                        break;
+                    if ui.button("Home").clicked()
+                        && let Some(home) = std::env::var_os("HOME")
+                    {
+                        self.enter(PathBuf::from(home));
                     }
-                    visible += 1;
-                    if entry.directory {
-                        if ui.button(format!("📁 {}", entry.name)).clicked() {
-                            self.enter(entry.path);
+                    ui.label(self.directory.display().to_string());
+                });
+                ui.horizontal(|ui| {
+                    ui.label(if self.selection() == Selection::Save { "Folder" } else { "Location" });
+                    if ui.text_edit_singleline(&mut self.location).changed() {
+                        self.selected.clear();
+                        self.replace = None;
+                    }
+                    if ui.button("Go").clicked() {
+                        let path = PathBuf::from(self.location.trim());
+                        let path = if path.is_absolute() { path } else { self.directory.join(path) };
+                        if path.is_dir() {
+                            self.enter(path);
+                        } else {
+                            self.problem = Some("Enter a directory or select a file below.".into());
                         }
-                    } else {
-                        let selected = self.selected.contains(&entry.path);
-                        if ui.selectable_label(selected, &entry.name).clicked() {
-                            if !(matches!(self.kind, Kind::Import | Kind::Artwork)
-                                || self.selection() == Selection::OpenMany)
-                                || !ui.input(|i| i.modifiers.ctrl)
-                            {
-                                self.selected.clear();
-                            }
-                            if !selected {
-                                self.selected.insert(entry.path.clone());
-                            } else {
-                                self.selected.remove(&entry.path);
-                            }
-                            self.location = entry.path.to_string_lossy().into_owned();
-                            self.problem = None;
+                    }
+                });
+                if self.selection() == Selection::Save {
+                    ui.horizontal(|ui| {
+                        ui.label("File name");
+                        if ui.text_edit_singleline(&mut self.save_name).changed() {
+                            self.selected.clear();
                             self.replace = None;
                         }
-                    }
+                    });
                 }
-            });
-            if let Some(problem) = &self.problem {
-                ui.colored_label(egui::Color32::LIGHT_RED, problem);
-            }
-            ui.separator();
-            if let Some(path) = &self.replace {
-                ui.colored_label(egui::Color32::YELLOW, format!("Replace existing file: {}?", path.display()));
-            }
-            ui.horizontal(|ui| {
-                if ui.button("Cancel").clicked() {
-                    result = Some(Choice::Cancel);
-                }
-                let action = match self.selection() {
-                    Selection::OpenOne | Selection::OpenMany => "Open",
-                    Selection::Save => {
-                        if self.replace.is_some() {
-                            "Replace"
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.label("Search");
+                    ui.text_edit_singleline(&mut self.filter).on_hover_text("Filter filenames in this folder");
+                });
+                ScrollArea::vertical().max_height(320.0).min_scrolled_height(180.0).show(ui, |ui| {
+                    ui.set_min_width(ui.available_width());
+                    let filter = self.filter.to_lowercase();
+                    let matching: Vec<_> = self
+                        .entries
+                        .iter()
+                        .filter(|entry| filter.is_empty() || entry.name.to_lowercase().contains(&filter))
+                        .take(2049)
+                        .cloned()
+                        .collect();
+                    let mut visible = 0;
+                    for entry in matching {
+                        if visible == 2048 {
+                            ui.label("More files: narrow the Search to find them.");
+                            break;
+                        }
+                        visible += 1;
+                        if entry.directory {
+                            if ui.button(format!("📁 {}", entry.name)).clicked() {
+                                self.enter(entry.path);
+                            }
                         } else {
-                            "Save"
+                            let selected = self.selected.contains(&entry.path);
+                            if ui.selectable_label(selected, &entry.name).clicked() {
+                                if self.selection() == Selection::Save {
+                                    self.selected.clear();
+                                    self.save_name = entry.name;
+                                } else if !(matches!(self.kind, Kind::Import | Kind::Artwork)
+                                    || self.selection() == Selection::OpenMany)
+                                    || !ui.input(|i| i.modifiers.ctrl)
+                                {
+                                    self.selected.clear();
+                                }
+                                if self.selection() != Selection::Save {
+                                    if !selected {
+                                        self.selected.insert(entry.path.clone());
+                                    } else {
+                                        self.selected.remove(&entry.path);
+                                    }
+                                    self.location = entry.path.to_string_lossy().into_owned();
+                                }
+                                self.problem = None;
+                                self.replace = None;
+                            }
                         }
                     }
-                    Selection::Folder => "Choose folder",
-                };
-                if ui.button(action).clicked() {
-                    match self.choose() {
-                        Ok(paths)
-                            if self.selection() == Selection::Save
-                                && paths.first().is_some_and(|path| path.exists())
-                                && self.replace.as_ref() != paths.first() =>
-                        {
-                            self.replace = paths.first().cloned();
-                        }
-                        Ok(paths) => result = Some(Choice::Files(paths)),
-                        Err(error) => self.problem = Some(error),
-                    }
+                });
+                if let Some(problem) = &self.problem {
+                    ui.colored_label(egui::Color32::LIGHT_RED, problem);
                 }
+                ui.separator();
+                if let Some(path) = &self.replace {
+                    ui.colored_label(egui::Color32::YELLOW, format!("Replace existing file: {}?", path.display()));
+                }
+                ui.horizontal(|ui| {
+                    if ui.button("Cancel").clicked() {
+                        result = Some(Choice::Cancel);
+                    }
+                    let action = match self.selection() {
+                        Selection::OpenOne | Selection::OpenMany => "Open",
+                        Selection::Save => {
+                            if self.replace.is_some() {
+                                "Replace"
+                            } else {
+                                "Save"
+                            }
+                        }
+                        Selection::Folder => "Choose folder",
+                    };
+                    if ui.button(action).clicked() {
+                        match self.choose() {
+                            Ok(paths)
+                                if self.selection() == Selection::Save
+                                    && paths.first().is_some_and(|path| path.exists())
+                                    && self.replace.as_ref() != paths.first() =>
+                            {
+                                self.replace = paths.first().cloned();
+                            }
+                            Ok(paths) => result = Some(Choice::Files(paths)),
+                            Err(error) => self.problem = Some(error),
+                        }
+                    }
+                });
             });
-        });
         if result.is_none() && modal.should_close() {
             result = Some(Choice::Cancel);
         }
@@ -377,12 +410,42 @@ mod tests {
         std::fs::write(&existing, b"do not overwrite this in a file picker test").unwrap();
         let mut save = Picker::custom("Save Sumi".into(), Selection::Save, vec!["sumi".into()], None);
         save.enter(dir.clone());
-        save.location = dir.join("painting.png").to_string_lossy().into_owned();
+        save.save_name = "painting.png".into();
         assert_eq!(save.choose().unwrap(), vec![existing.clone()]);
         assert!(existing.exists(), "selecting a destination does not write it");
-        save.location = dir.join("missing-parent").join("painting.sumi").to_string_lossy().into_owned();
+        save.save_name = "missing-parent/painting.sumi".into();
         assert!(save.choose().is_err(), "an invalid parent must be rejected before export");
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn save_picker_navigation_keeps_filename_in_new_folder_and_rejects_bare_directory() {
+        let root = std::env::temp_dir().join(format!("sumi-save-navigate-{}", std::process::id()));
+        let documents = root.join("Documents");
+        std::fs::create_dir_all(&documents).unwrap();
+        let mut save =
+            Picker::custom("Export PNG".into(), Selection::Save, vec!["png".into()], Some("Artwork.png".into()));
+        save.enter(root.clone());
+        assert_eq!(save.choose().unwrap(), vec![root.join("Artwork.png")]);
+        save.enter(documents.clone());
+        assert_eq!(save.save_name, "Artwork.png");
+        assert_eq!(
+            save.choose().unwrap(),
+            vec![documents.join("Artwork.png")],
+            "navigating must not write outside the folder"
+        );
+        save.enter(root.clone());
+        save.location = documents.to_string_lossy().into_owned();
+        assert_eq!(
+            save.choose().unwrap(),
+            vec![documents.join("Artwork.png")],
+            "typed folder must be honored without Go"
+        );
+        save.save_name = documents.to_string_lossy().into_owned();
+        assert!(save.choose().is_err(), "a directory must not be renamed into a filename");
+        save.save_name.clear();
+        assert!(save.choose().is_err(), "blank save destination must not infer the current folder name");
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

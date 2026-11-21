@@ -3635,7 +3635,7 @@ dependencies = [
 
 [[package]]
 name = "sumi-clip"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "clip-core",
@@ -3650,7 +3650,7 @@ dependencies = [
 
 [[package]]
 name = "sumi-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "cosmic-text",
  "image",
@@ -3673,7 +3673,7 @@ dependencies = [
 
 [[package]]
 name = "sumi-desktop"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "arboard",
  "block2 0.6.2",
@@ -3714,7 +3714,7 @@ dependencies = [
 
 [[package]]
 name = "sumi-engine"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "miniz_oxide 0.8.9",
  "serde",
@@ -3723,7 +3723,7 @@ dependencies = [
 
 [[package]]
 name = "sumi-gpu"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "bytemuck",
  "log",

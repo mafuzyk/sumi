@@ -194,89 +194,94 @@ impl SourceEditor {
         }
         let screen = ctx.content_rect();
         let mut closed = None;
-        egui::Area::new(Id::unique("source editor")).fixed_pos(screen.min).order(Order::Tooltip).show(ctx, |ui| {
-            // nothing under it is touched while it shows
-            ui.allocate_rect(screen, Sense::click_and_drag());
-            let page = if wide {
-                Rect::from_min_max(pos2(screen.left() + WIDE_LEFT, screen.top()), screen.max)
-            } else {
-                screen
-            };
-            let corner = if wide { CornerRadius { nw: 20, sw: 20, ne: 0, se: 0 } } else { CornerRadius::ZERO };
-            if self.repeating
-                && let Some(shown) = &self.shown
-            {
-                // the grain repeating over the whole page, at its own pixels
-                let tile = shown.size()[0] as f32 / ctx.pixels_per_point();
-                let uv = Rect::from_min_size(Pos2::ZERO, page.size() / tile);
-                ui.painter().add(RectShape::filled(page, corner, Color32::WHITE).with_texture(shown.id(), uv));
-            } else {
-                ui.painter().rect_filled(page, corner, argb(PAGE));
-                self.view(ui, page);
-            }
-            let title = match self.kind {
-                SourceKind::Shape => "Shape Editor",
-                SourceKind::Grain => "Grain Editor",
-                SourceKind::Metallic => "Metallic Editor",
-                SourceKind::Roughness => "Roughness Editor",
-            };
-            let at = page.min + vec2(24.0, if wide { 16.0 } else { 26.0 });
-            text(ui.painter(), at, Align2::LEFT_TOP, title, 22.0, Weight::Bold, argb(TITLE));
-            let top = page.top() + if wide { 10.0 } else { 20.0 };
-            let right = page.right() - if wide { 12.0 } else { 20.0 };
-            let done = Rect::from_min_size(pos2(right - 44.0, top), vec2(44.0, 45.0));
-            let mut buttons = vec![("Import", 71.0)];
-            if self.grain() {
-                buttons.push(("Auto repeat", 107.0));
-            }
-            buttons.push(("Cancel", 73.0));
-            let width: f32 = buttons.iter().map(|b| b.1).sum();
-            let capsule = Rect::from_min_size(pos2(done.left() - 13.0 - width, top + 1.0), vec2(width, 43.0));
-            ui.painter().rect_filled(capsule, 21.5, argb(CAPSULE));
-            ui.painter().rect_stroke(capsule, 21.5, Stroke::new(1.0, argb(CAPSULE_EDGE)), egui::StrokeKind::Inside);
-            let import = Rect::from_min_size(capsule.min, vec2(71.0, 43.0));
-            let mut x = capsule.left();
-            for (label, w) in buttons {
-                let button = Rect::from_min_size(pos2(x, capsule.top()), vec2(w, 43.0));
-                x += w;
-                let on = label == "Auto repeat" && self.repeating;
-                if on {
-                    ui.painter().rect_filled(button, 21.5, argb(pc::ACCENT));
+        egui::Area::new(Id::unique("source editor"))
+            .fixed_pos(screen.min)
+            // The Linux chooser is a modal in the foreground; leaving this
+            // full-screen editor in Tooltip order would cover that modal.
+            .order(if crate::file_chooser::busy() { Order::Foreground } else { Order::Tooltip })
+            .show(ctx, |ui| {
+                // nothing under it is touched while it shows
+                ui.allocate_rect(screen, Sense::click_and_drag());
+                let page = if wide {
+                    Rect::from_min_max(pos2(screen.left() + WIDE_LEFT, screen.top()), screen.max)
+                } else {
+                    screen
+                };
+                let corner = if wide { CornerRadius { nw: 20, sw: 20, ne: 0, se: 0 } } else { CornerRadius::ZERO };
+                if self.repeating
+                    && let Some(shown) = &self.shown
+                {
+                    // the grain repeating over the whole page, at its own pixels
+                    let tile = shown.size()[0] as f32 / ctx.pixels_per_point();
+                    let uv = Rect::from_min_size(Pos2::ZERO, page.size() / tile);
+                    ui.painter().add(RectShape::filled(page, corner, Color32::WHITE).with_texture(shown.id(), uv));
+                } else {
+                    ui.painter().rect_filled(page, corner, argb(PAGE));
+                    self.view(ui, page);
                 }
-                let ink = if on { argb(pc::ACCENT_INK) } else { argb(CAPSULE_INK) };
-                text(ui.painter(), button.center(), Align2::CENTER_CENTER, label, 17.0, Weight::Regular, ink);
-                if !ui.interact(button, ui.scope_id().with(("capsule", label)), Sense::click()).clicked() {
-                    continue;
+                let title = match self.kind {
+                    SourceKind::Shape => "Shape Editor",
+                    SourceKind::Grain => "Grain Editor",
+                    SourceKind::Metallic => "Metallic Editor",
+                    SourceKind::Roughness => "Roughness Editor",
+                };
+                let at = page.min + vec2(24.0, if wide { 16.0 } else { 26.0 });
+                text(ui.painter(), at, Align2::LEFT_TOP, title, 22.0, Weight::Bold, argb(TITLE));
+                let top = page.top() + if wide { 10.0 } else { 20.0 };
+                let right = page.right() - if wide { 12.0 } else { 20.0 };
+                let done = Rect::from_min_size(pos2(right - 44.0, top), vec2(44.0, 45.0));
+                let mut buttons = vec![("Import", 71.0)];
+                if self.grain() {
+                    buttons.push(("Auto repeat", 107.0));
                 }
-                match label {
-                    "Import" => {
-                        self.importing = match self.importing {
-                            Some(_) => None,
-                            None => Some(ctx.cumulative_frame_nr()),
-                        };
+                buttons.push(("Cancel", 73.0));
+                let width: f32 = buttons.iter().map(|b| b.1).sum();
+                let capsule = Rect::from_min_size(pos2(done.left() - 13.0 - width, top + 1.0), vec2(width, 43.0));
+                ui.painter().rect_filled(capsule, 21.5, argb(CAPSULE));
+                ui.painter().rect_stroke(capsule, 21.5, Stroke::new(1.0, argb(CAPSULE_EDGE)), egui::StrokeKind::Inside);
+                let import = Rect::from_min_size(capsule.min, vec2(71.0, 43.0));
+                let mut x = capsule.left();
+                for (label, w) in buttons {
+                    let button = Rect::from_min_size(pos2(x, capsule.top()), vec2(w, 43.0));
+                    x += w;
+                    let on = label == "Auto repeat" && self.repeating;
+                    if on {
+                        ui.painter().rect_filled(button, 21.5, argb(pc::ACCENT));
                     }
-                    "Auto repeat" => {
-                        self.repeating = !self.repeating;
-                        self.stale = true;
+                    let ink = if on { argb(pc::ACCENT_INK) } else { argb(CAPSULE_INK) };
+                    text(ui.painter(), button.center(), Align2::CENTER_CENTER, label, 17.0, Weight::Regular, ink);
+                    if !ui.interact(button, ui.scope_id().with(("capsule", label)), Sense::click()).clicked() {
+                        continue;
                     }
-                    _ => closed = Some(false),
+                    match label {
+                        "Import" => {
+                            self.importing = match self.importing {
+                                Some(_) => None,
+                                None => Some(ctx.cumulative_frame_nr()),
+                            };
+                        }
+                        "Auto repeat" => {
+                            self.repeating = !self.repeating;
+                            self.stale = true;
+                        }
+                        _ => closed = Some(false),
+                    }
                 }
-            }
-            ui.painter().rect_filled(done, 22, argb(DONE));
-            look.icon(ui, &icons::DONE_TICK, done.center(), 40.0, argb(pc::ACCENT_INK));
-            if ui.interact(done, ui.scope_id().with("done"), Sense::click()).clicked() {
-                closed = Some(self.keep(session));
-            }
-            if self.repeating {
-                self.repeat_panel(ui, page);
-            }
-            if self.importing.is_some() {
-                self.import_menu(ui, look, import);
-            }
-            if self.library.is_some() {
-                self.library_view(ui, screen);
-            }
-        });
+                ui.painter().rect_filled(done, 22, argb(DONE));
+                look.icon(ui, &icons::DONE_TICK, done.center(), 40.0, argb(pc::ACCENT_INK));
+                if ui.interact(done, ui.scope_id().with("done"), Sense::click()).clicked() {
+                    closed = Some(self.keep(session));
+                }
+                if self.repeating {
+                    self.repeat_panel(ui, page);
+                }
+                if self.importing.is_some() {
+                    self.import_menu(ui, look, import);
+                }
+                if self.library.is_some() {
+                    self.library_view(ui, screen);
+                }
+            });
         closed
     }
 

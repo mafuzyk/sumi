@@ -797,12 +797,14 @@ fn on_white(frame: &sumi_core::ThumbnailImage, w: u32, h: u32) -> Vec<u8> {
 fn save_as(made: &std::path::Path) {
     let name = made.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     if cfg!(target_os = "linux") {
-        let made = crate::video::OwnedExport(made.to_path_buf());
+        let made = crate::video::OwnedExport::new(made.to_path_buf());
         crate::file_chooser::save_with_result("Export time-lapse video", "mp4", &name, move |selected| {
             if let Some(to) = selected {
                 crate::files::write_meanwhile(false, move || {
-                    if let Err(e) = save_to(&made.0, &to) {
-                        crate::files::tell_later("Can't export", &e.to_string());
+                    let mut made = made;
+                    match save_to(&made.path, &to) {
+                        Ok(()) => made.keep_if_saved_here(&to),
+                        Err(e) => crate::files::tell_later("Can't export", &e.to_string()),
                     }
                 });
             }
@@ -2140,6 +2142,20 @@ mod tests {
         save_to(&made, &made).unwrap();
         assert_eq!(std::fs::read(&made).unwrap(), b"made video", "the made video was emptied");
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn saving_to_owned_temporary_video_preserves_the_selected_destination_after_drop() {
+        let made = crate::video::export_temp_path("same-path-timelapse", "mp4");
+        std::fs::create_dir_all(made.parent().unwrap()).unwrap();
+        std::fs::write(&made, b"user selected this exact temporary video").unwrap();
+        {
+            let mut owned = crate::video::OwnedExport::new(made.clone());
+            save_to(&owned.path, &made).unwrap();
+            owned.keep_if_saved_here(&made);
+        }
+        assert_eq!(std::fs::read(&made).unwrap(), b"user selected this exact temporary video");
+        crate::video::discard(&made);
     }
 
     #[test]

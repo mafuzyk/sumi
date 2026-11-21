@@ -54,11 +54,37 @@ pub(crate) fn discard(path: &Path) {
 
 /// Owns a temporary rendered video while the in-window Save dialog is open.
 /// A cancelled dialog, a closed application or a finished copy all discard it.
-pub(crate) struct OwnedExport(pub(crate) PathBuf);
+pub(crate) struct OwnedExport {
+    pub(crate) path: PathBuf,
+    /// When the user explicitly saves to the temporary source's own path,
+    /// that path becomes the final destination and must no longer be removed.
+    keep: bool,
+}
+
+impl OwnedExport {
+    pub(crate) fn new(path: PathBuf) -> Self {
+        Self { path, keep: false }
+    }
+
+    /// Call only after the copy has been successfully published. The selected
+    /// destination can be an absolute path inside the temporary exports folder.
+    pub(crate) fn keep_if_saved_here(&mut self, destination: &Path) {
+        let same_path = self.path == destination
+            || std::fs::canonicalize(&self.path)
+                .ok()
+                .zip(std::fs::canonicalize(destination).ok())
+                .is_some_and(|(source, target)| source == target);
+        if same_path {
+            self.keep = true;
+        }
+    }
+}
 
 impl Drop for OwnedExport {
     fn drop(&mut self) {
-        discard(&self.0);
+        if !self.keep {
+            discard(&self.path);
+        }
     }
 }
 
@@ -1280,7 +1306,7 @@ mod tests {
         std::fs::write(&made, b"not saved yet").unwrap();
         let parent = made.parent().unwrap().to_path_buf();
         {
-            let _owned = super::OwnedExport(made.clone());
+            let _owned = super::OwnedExport::new(made.clone());
             assert!(made.is_file());
         }
         assert!(!made.exists(), "a dropped file chooser cannot leak a temporary video");
