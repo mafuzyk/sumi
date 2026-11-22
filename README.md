@@ -78,11 +78,6 @@ compositing and display), `crates/core` (canvas session, tools, gallery, exports
 - [Writing a plugin](docs/plugins.md): the `.sumi-plugin` format, hooks, filters, and the sample plugins in `plugins/`.
 - [Icon style guide](docs/icons/STYLE_GUIDE.md): the grid and stroke rules the interface icons follow.
 
-## Community
-
-The Discord server is at <https://discord.gg/gypGes3Uca>. Bugs and feature requests go to the
-[issue tracker](https://github.com/mafuzyk/sumi/issues).
-
 ## License
 
 Sumi is released under the GNU General Public License, version 3 or later. See
